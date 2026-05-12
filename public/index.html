@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChatPulse</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0e0e10; color: #efeff1; min-height: 100vh; padding: 24px; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .subtitle { color: #adadb8; font-size: 0.85rem; margin-bottom: 24px; }
+
+    .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .08em; color: #adadb8; margin-bottom: 12px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 32px; }
+
+    .card {
+      background: #1f1f23;
+      border-radius: 8px;
+      padding: 14px 16px;
+      border-left: 4px solid #3a3a3d;
+      transition: border-color .2s;
+    }
+    .card.green  { border-color: #00b894; }
+    .card.yellow { border-color: #fdcb6e; }
+    .card.red    { border-color: #d63031; }
+
+    .card-name { font-weight: 600; font-size: 1rem; margin-bottom: 4px; }
+    .card-title { font-size: 0.78rem; color: #adadb8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
+    .card-rate { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+    .card-meta { font-size: 0.75rem; color: #adadb8; margin-top: 4px; }
+
+    .alerts { list-style: none; }
+    .alert-item { background: #1f1f23; border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+    .alert-channel { font-weight: 600; min-width: 120px; }
+    .alert-info { font-size: 0.82rem; color: #adadb8; }
+    .alert-time { margin-left: auto; font-size: 0.75rem; color: #6b6b7a; white-space: nowrap; }
+
+    .empty { color: #adadb8; font-size: 0.85rem; padding: 12px 0; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #00b894; margin-right: 6px; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  </style>
+</head>
+<body>
+  <h1><span class="dot"></span>ChatPulse</h1>
+  <p class="subtitle">Twitch チャット流速モニター</p>
+
+  <p class="section-title">監視中の配信</p>
+  <div class="grid" id="grid"><p class="empty">配信を取得中...</p></div>
+
+  <p class="section-title">最近のアラート</p>
+  <ul class="alerts" id="alerts"><li class="empty">アラートはまだありません</li></ul>
+
+  <script src="app.js"></script>
+</body>
+</html>
