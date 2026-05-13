@@ -32,11 +32,31 @@ if (!TWITCH_CLIENT_ID || !currentToken || !DISCORD_WEBHOOK_URL) {
   process.exit(1);
 }
 
+const spikeThreshold = Number(SPIKE_THRESHOLD);
+const minRate = Number(MIN_RATE);
+const cooldownMin = Number(COOLDOWN_MIN);
+
+if (!Number.isFinite(spikeThreshold) || spikeThreshold <= 0) {
+  console.error(`Invalid SPIKE_THRESHOLD: "${SPIKE_THRESHOLD}". Must be a positive number.`);
+  process.exit(1);
+}
+if (!Number.isFinite(minRate) || minRate <= 0) {
+  console.error(`Invalid MIN_RATE: "${MIN_RATE}". Must be a positive number.`);
+  process.exit(1);
+}
+if (!Number.isFinite(cooldownMin) || cooldownMin <= 0) {
+  console.error(`Invalid COOLDOWN_MIN: "${COOLDOWN_MIN}". Must be a positive number.`);
+  process.exit(1);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, "../.env");
 
 async function persistTokens(access: string, refresh: string): Promise<void> {
-  if (!existsSync(ENV_PATH)) return;
+  if (!existsSync(ENV_PATH)) {
+    console.warn("[auth] .env not found — tokens not persisted. On Fly.io, run: flyctl secrets set TWITCH_ACCESS_TOKEN=<new> TWITCH_REFRESH_TOKEN=<new>");
+    return;
+  }
   let content = await readFile(ENV_PATH, "utf-8");
   content = content
     .replace(/^TWITCH_ACCESS_TOKEN=.*/m, `TWITCH_ACCESS_TOKEN=${access}`)
@@ -55,7 +75,7 @@ async function doTokenRefresh(): Promise<void> {
   console.log("[auth] Token refreshed");
 }
 
-const COOLDOWN_MS = Number(COOLDOWN_MIN) * 60 * 1000;
+const COOLDOWN_MS = cooldownMin * 60 * 1000;
 const POLL_INTERVAL_MS = 60_000;
 
 const alertCooldowns = new Map<string, number>();
@@ -83,8 +103,8 @@ const monitor = new ChatMonitor(
       streamUrl: `https://twitch.tv/${channel}`,
     }).catch((err: Error) => console.error("[notifier]", err.message));
   },
-  Number(SPIKE_THRESHOLD),
-  Number(MIN_RATE)
+  spikeThreshold,
+  minRate
 );
 
 let userId = "";
@@ -131,9 +151,9 @@ app.get("/api/status", (_req, res) => {
     streams: monitor.getStatus(),
     recentAlerts: recentAlerts.slice(0, 20),
     config: {
-      spikeThreshold: Number(SPIKE_THRESHOLD),
-      minRate: Number(MIN_RATE),
-      cooldownMin: Number(COOLDOWN_MIN),
+      spikeThreshold,
+      minRate,
+      cooldownMin,
     },
   });
 });

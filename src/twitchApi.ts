@@ -33,6 +33,7 @@ export async function getCurrentUser(clientId: string, token: string): Promise<T
     token,
     "https://api.twitch.tv/helix/users"
   );
+  if (!data.data[0]) throw new Error("No user returned from Twitch API — check token scopes");
   return data.data[0];
 }
 

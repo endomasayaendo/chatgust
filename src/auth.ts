@@ -28,7 +28,21 @@ function waitForCode(): Promise<string> {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
-      if (url.pathname !== "/callback") return;
+      if (url.pathname !== "/callback") {
+        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+        res.end("<h2>404 Not Found</h2><p>Waiting for Twitch OAuth callback...</p>");
+        return;
+      }
+
+      const error = url.searchParams.get("error");
+      if (error) {
+        const desc = url.searchParams.get("error_description") ?? "";
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<h2>Auth failed: ${error}</h2><p>${desc}</p>`);
+        server.close();
+        reject(new Error(`Auth failed: ${error} — ${desc}`));
+        return;
+      }
 
       const code = url.searchParams.get("code");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
