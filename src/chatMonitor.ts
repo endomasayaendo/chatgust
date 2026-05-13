@@ -6,6 +6,7 @@ export type AlertCallback = (channel: string, rate: number, baseline: number) =>
 interface ChannelState {
   detector: RateDetector;
   title: string;
+  wasSpike: boolean;
 }
 
 const CHECK_INTERVAL_MS = 5_000;
@@ -71,9 +72,11 @@ export class ChatMonitor {
     if (this.timer) return;
     this.timer = setInterval(() => {
       for (const [channel, state] of this.channels) {
-        if (state.detector.isSpike(this.spikeThreshold, this.minRate)) {
+        const isSpike = state.detector.isSpike(this.spikeThreshold, this.minRate);
+        if (isSpike && state.wasSpike) {
           this.onAlert(channel, state.detector.getRate(), state.detector.getBaseline());
         }
+        state.wasSpike = isSpike;
       }
     }, CHECK_INTERVAL_MS);
   }
@@ -83,7 +86,7 @@ export class ChatMonitor {
       this.channels.get(channel)!.title = title;
       return;
     }
-    this.channels.set(channel, { detector: new RateDetector(), title });
+    this.channels.set(channel, { detector: new RateDetector(), title, wasSpike: false });
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       if (!this.ws) this.connect();
     } else {
