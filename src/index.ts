@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import basicAuth from "express-basic-auth";
 import path from "path";
 import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
@@ -18,6 +19,7 @@ const {
   TWITCH_CLIENT_ID,
   TWITCH_CLIENT_SECRET,
   DISCORD_WEBHOOK_URL,
+  DASHBOARD_PASSWORD,
   PORT = "3000",
   SPIKE_THRESHOLD = "8",
   MIN_RATE = "5",
@@ -143,6 +145,10 @@ async function syncStreams(): Promise<void> {
 }
 
 const app = express();
+
+if (DASHBOARD_PASSWORD) {
+  app.use(basicAuth({ users: { admin: DASHBOARD_PASSWORD }, challenge: true }));
+}
 
 app.use(express.static(path.join(__dirname, "../public")));
 
