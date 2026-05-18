@@ -86,4 +86,4 @@ async function updateEnv(accessToken: string, refreshToken: string): Promise<voi
 const code = await waitForCode();
 const tokens = await exchangeCode(code);
 await updateEnv(tokens.access_token, tokens.refresh_token);
-console.log("Tokens saved to .env. Run npm start to launch ChatPulse!");
+console.log("Tokens saved to .env. Run npm start to launch ChatGust!");

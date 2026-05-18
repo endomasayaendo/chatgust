@@ -1,4 +1,4 @@
-app = "chatpulse"
+app = "chatgust"
 primary_region = "nrt"
 
 [build]
