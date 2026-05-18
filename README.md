@@ -134,7 +134,18 @@ baseline < 1 の場合（配信開始直後など）:
 | `SPIKE_THRESHOLD` | `8` | ベースラインの何倍でアラートを出すか |
 | `MIN_RATE` | `5` | アラートに必要な最低メッセージ数（30秒） |
 | `COOLDOWN_MIN` | `5` | 同チャンネルへの連続アラートを防ぐ間隔（分） |
-| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名: `admin`） |
+| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる |
+
+`DASHBOARD_PASSWORD` を設定した場合のログイン情報：
+
+- ユーザー名: `admin`
+- パスワード: `DASHBOARD_PASSWORD` に設定した値
+
+Fly.io に反映する場合は再デプロイ不要で以下のコマンドのみで OK：
+
+```bash
+flyctl secrets set DASHBOARD_PASSWORD=<password> -a <app-name>
+```
 
 ---
 
