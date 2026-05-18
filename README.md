@@ -1,122 +1,142 @@
-# ChatPulse — 設計書
+# ChatGust
 
-複数のTwitch配信チャットを裏で監視し、急加速した瞬間だけDiscordに通知するツール。
-PCの電源に依存しないよう Fly.io に常駐させ、ブラウザのWeb UIで状態を管理できる。
+Twitch のフォロー中配信を裏で監視し、チャットが急加速した瞬間だけ Discord に通知するツール。
+Fly.io に常駐させることで PC の電源を切っても動き続ける。
 
 ---
 
-## 確定仕様
+## 機能
 
-| 項目 | 決定内容 |
-|------|---------|
-| 言語 | TypeScript（tsx で開発時実行） |
-| 通知先 | Discord Webhook |
-| チャンネル取得 | Twitch フォローリスト（1分ごとに自動更新） |
-| IRC接続 | 全チャンネルを1本のWebSocketにまとめる（効率化） |
-| 実行環境 | Fly.io（無料枠、常時ON） |
-| Web UI | ブラウザダッシュボード（チャンネル一覧・リアルタイム流速） |
-| OAuth コールバックポート | 22377 |
+- フォロー中のライブ配信を1分ごとに自動取得・監視
+- IRC WebSocket 1本で全チャンネルのチャットを受信
+- 直近30秒の流速がベースラインの8倍以上になったら Discord に通知
+- ブラウザダッシュボードでリアルタイムの流速・アラート履歴を確認
+
+---
+
+## 事前準備
+
+### Twitch アプリの作成
+
+1. [Twitch Developer Console](https://dev.twitch.tv/console/apps) でアプリを新規作成
+2. OAuth リダイレクト URL に `http://localhost:22377/callback` を追加
+3. **Client ID** と **Client Secret** を控えておく
+
+### Discord Webhook の作成
+
+通知を送りたいチャンネルの **設定 → 連携サービス → ウェブフック** から Webhook を作成し、URL を控えておく。
+
+---
+
+## セットアップ
+
+```bash
+git clone https://github.com/<your-username>/chatgust.git
+cd chatgust
+npm install
+cp .env.example .env
+```
+
+`.env` を開いて以下を記入：
+
+```
+TWITCH_CLIENT_ID=<Client ID>
+TWITCH_CLIENT_SECRET=<Client Secret>
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+### Twitch 認証（初回のみ）
+
+```bash
+npm run auth
+```
+
+ブラウザが開くので Twitch にログインする。認証が完了するとアクセストークンが `.env` に自動保存される。
+
+---
+
+## ローカルで起動
+
+```bash
+npm start
+```
+
+`http://localhost:3000` でダッシュボードを確認できる。
+
+---
+
+## Fly.io へのデプロイ（常時稼働）
+
+PC の電源に依存せず常時監視したい場合は Fly.io にデプロイする。
+
+```bash
+# flyctl のインストール（未インストールの場合）
+# https://fly.io/docs/hands-on/install-flyctl/
+
+flyctl auth login
+flyctl apps create chatgust        # アプリ名は任意
+flyctl secrets import < .env
+flyctl deploy
+```
+
+デプロイ後は `https://<app-name>.fly.dev` でダッシュボードにアクセスできる。
+
+> **Note**  
+> Fly.io の無料枠で動作する。`fly.toml` の `primary_region = "nrt"` は東京リージョン。変更する場合は `flyctl platform regions` で一覧を確認する。
+
+### GitHub Actions による自動デプロイ
+
+`main` ブランチへのプッシュで自動デプロイされる設定が含まれている。
+リポジトリの **Settings → Secrets and variables → Actions** に以下を登録する：
+
+| Secret | 値 |
+|--------|----|
+| `FLY_API_TOKEN` | `flyctl tokens create deploy -a <app-name>` で発行したトークン |
+
+---
+
+## アラート検知ロジック
+
+```
+直近30秒のメッセージ数           = current_rate
+直前10ウィンドウ（約5分間）の平均  = baseline
+
+アラート条件:
+  current_rate >= baseline × SPIKE_THRESHOLD   （デフォルト: 8倍以上）
+  AND current_rate >= MIN_RATE                  （デフォルト: 5件以上）
+  AND 前回アラートから COOLDOWN_MIN 分以上経過   （デフォルト: 5分）
+
+baseline < 1 の場合（配信開始直後など）:
+  current_rate >= MIN_RATE × 2 を閾値として使用
+```
+
+`.env` で以下の変数を変更することで調整できる：
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `SPIKE_THRESHOLD` | `8` | ベースラインの何倍でアラートを出すか |
+| `MIN_RATE` | `5` | アラートに必要な最低メッセージ数（30秒） |
+| `COOLDOWN_MIN` | `5` | 同チャンネルへの連続アラートを防ぐ間隔（分） |
 
 ---
 
 ## ファイル構成
 
 ```
-ChatPulse/
-├── package.json          # name: "chatpulse"
-├── tsconfig.json
-├── fly.toml              # Fly.io デプロイ設定
-├── .env.example
+chatgust/
 ├── src/
-│   ├── index.ts          # Express サーバー + メインオーケストレーター
-│   ├── auth.ts           # 初回のみローカル実行するOAuth取得スクリプト
-│   ├── twitchApi.ts      # Twitch REST API（フォロー一覧・ライブ配信取得）
-│   ├── chatMonitor.ts    # IRC WebSocket管理（1接続で全チャンネルをJOIN）
-│   ├── rateDetector.ts   # スライディングウィンドウ流速計算（チャンネルごと）
-│   └── notifier.ts       # Discord Webhook送信
-└── public/
-    ├── index.html        # Web UI（HTML）
-    └── app.js            # Web UI（vanilla JS、5秒ごとに /api/status をポーリング）
+│   ├── index.ts        # Express サーバー + メインオーケストレーター
+│   ├── auth.ts         # 初回 Twitch 認証スクリプト（ローカルのみ実行）
+│   ├── twitchApi.ts    # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
+│   ├── chatMonitor.ts  # IRC WebSocket 管理（1接続で全チャンネルを JOIN）
+│   ├── rateDetector.ts # 流速計算（スライディングウィンドウ）
+│   └── notifier.ts     # Discord Webhook 送信
+├── public/
+│   ├── index.html      # ダッシュボード UI
+│   └── app.js          # 5秒ごとに /api/status をポーリング
+├── .github/workflows/
+│   └── deploy.yml      # GitHub Actions 自動デプロイ
+├── fly.toml            # Fly.io 設定
+├── Dockerfile
+└── .env.example
 ```
-
----
-
-## 主要アルゴリズム
-
-### 急加速検知（rateDetector.ts）
-
-```
-直近30秒のメッセージ数  = current_rate
-直前10個の30秒ウィンドウの平均 = baseline  （= 直近5分間の平均）
-
-アラート条件:
-  current_rate >= baseline × 3   ← 通常の3倍以上
-  AND current_rate >= 5          ← 最低5件（過疎チャンネルの誤爆防止）
-  AND 同チャンネルの前回アラートから5分以上経過
-
-ベースライン不足時（配信開始直後など）:
-  baseline < 1 の場合は current_rate >= 10 を閾値として使用
-
-※ SPIKE_THRESHOLD / MIN_RATE / COOLDOWN_MIN は .env で変更可能
-```
-
-### IRC WebSocket（chatMonitor.ts）
-
-- `wss://irc-ws.chat.twitch.tv:443` に1本だけ接続（複数チャンネルを1接続でJOIN）
-- `NICK justinfan<ランダム数字>` で認証不要の読み取り専用接続
-- 5秒ごとに全チャンネルの流速を確認
-- 切断時は10秒後に自動再接続
-
-### ライブストリーム管理（index.ts）
-
-- 起動時 + 1分ごとにフォロー中の配信を取得
-- 新たに配信開始 → IRC で `JOIN #channel`
-- 配信終了 → IRC で `PART #channel`
-
-### Web UI（public/）
-
-- `GET /api/status` → 監視中チャンネル一覧・現在の流速・最新アラート履歴を JSON で返す
-- `public/app.js` が5秒ごとにポーリング → カードを更新
-- カードの色: 通常=緑、2倍=黄、3倍以上=赤
-
----
-
-## セットアップ手順（完成後）
-
-```
-【初回セットアップ：ローカルで実行】
-1. https://dev.twitch.tv/console/apps でアプリ作成
-   リダイレクトURL: http://localhost:22377/callback
-
-2. .env.example を .env にコピーして Client ID / Secret を記入
-3. Discord チャンネルで Webhook URL を作成して .env に追記
-4. npx tsx src/auth.ts → ブラウザでTwitch認証 → .env にトークン自動保存
-
-【Fly.io へデプロイ】
-5. flyctl auth login
-6. flyctl launch
-7. flyctl secrets import < .env
-8. flyctl deploy
-
-【以後】
-- https://<app-name>.fly.dev  でダッシュボードを確認
-- Discord にアラートが届く
-```
-
----
-
-## Discord 通知イメージ
-
-```
-🔥 shroud のチャットが盛り上がってる！
-────────────────────────
-直近30秒: 87 メッセージ
-通常の 5.2倍 ｜ ベースライン: 16.7件
-配信を見る → https://twitch.tv/shroud
-```
-
----
-
-## 未決事項（明日以降）
-
-- [ ] 実装スタート（ステップ1から順に許可をもらいながら進める）

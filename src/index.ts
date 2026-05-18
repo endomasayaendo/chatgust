@@ -19,7 +19,7 @@ const {
   TWITCH_CLIENT_SECRET,
   DISCORD_WEBHOOK_URL,
   PORT = "3000",
-  SPIKE_THRESHOLD = "3",
+  SPIKE_THRESHOLD = "8",
   MIN_RATE = "5",
   COOLDOWN_MIN = "5",
 } = process.env;
