@@ -14,6 +14,23 @@ Fly.io に常駐させることで PC の電源を切っても動き続ける。
 
 ---
 
+## アーキテクチャ
+
+```mermaid
+flowchart LR
+  TwitchAPI[Twitch API] -->|フォローリスト\n1分ごと| idx[index.ts]
+  IRC[Twitch IRC\nWebSocket] -->|PRIVMSG| mon[chatMonitor.ts]
+  idx -->|JOIN / PART| mon
+  mon -->|メッセージ記録| det[rateDetector.ts]
+  det -->|スパイク検知| mon
+  mon -->|アラート発火| idx
+  idx --> not[notifier.ts]
+  not -->|Webhook POST| Discord([Discord])
+  idx -->|/api/status\n5秒ごと| ui([ブラウザ])
+```
+
+---
+
 ## 事前準備
 
 ### Twitch アプリの作成
