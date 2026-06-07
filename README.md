@@ -33,57 +33,44 @@ Fly.io に常駐させれば、PC の電源を切っても見逃さない。
 - 🔌 IRC WebSocket **1本**で全チャンネルのチャットを同時受信
 - 📈 **zスコア検知** — 平常時のばらつきから統計的に突出した瞬間を捕捉（配信規模に依存しない）
 - 🎯 通知対象チャンネルを **許可リスト**で絞り込み可能（`NOTIFY_CHANNELS`）
-- 🖥 ブラウザ**ダッシュボード**で監視中チャンネルの流速・ベースライン・アラート履歴をリアルタイム確認（`http://localhost:3000`）
+- 🖥 **ダッシュボード**(ブラウザ)で監視中チャンネルの流速・ベースライン・アラート履歴をリアルタイム確認
 - 🔁 トークンの自動リフレッシュ／IRC 自動再接続で落ちにくい
 
 ---
 
 ## 🏗 アーキテクチャ
 
-Twitch を裏で監視し、結果を **ダッシュボード**と **Discord 通知**としてあなたに届ける。
-
 ```mermaid
-flowchart TB
-  %% 上段: Twitch → ChatGust（横並び）を1つのグループにネスト
-  subgraph pipeline[" "]
-    direction LR
-    subgraph Twitch
-      direction TB
-      API["Twitch API<br/>フォロー・配信取得"]
-      IRC["Twitch IRC<br/>チャット"]
-    end
-    subgraph ChatGust
-      direction TB
-      idx["index.ts<br/>オーケストレーター + サーバー"]
-      mon["chatMonitor.ts<br/>IRC 管理"]
-      det["rateDetector.ts<br/>流速 + zスコア"]
-      not["notifier.ts"]
-      idx -->|JOIN / PART| mon
-      mon -->|メッセージ記録| det
-      det -->|スパイク検知| mon
-      mon -->|アラート発火| idx
-      idx --> not
-    end
-    API -->|1分ごと| idx
-    IRC -->|PRIVMSG| mon
-  end
-
-  %% 下段: ユーザー（ChatGust の下）
-  subgraph User["ユーザー"]
+flowchart LR
+  %% --- 外部サービス ---
+  subgraph ext["外部サービス"]
     direction TB
-    Discord["💬 Discord 通知"]
-    Browser["🖥 ダッシュボード（ブラウザ）"]
-    Discord ~~~ Browser
+    Twitch["Twitch<br/>API / IRC"]
   end
 
-  not -->|Webhook POST| Discord
-  idx -->|/api/status・5秒ごと| Browser
+  %% --- ChatGust 本体（役割で集約）---
+  subgraph app["ChatGust"]
+    direction TB
+    ingest["取得・受信<br/>index ・ chatMonitor"]
+    detect["流速計測・スパイク検知<br/>rateDetector"]
+    notify["通知生成<br/>notifier"]
+    ingest --> detect --> notify
+  end
+
+  %% --- ユーザーの受け取り口 ---
+  Discord["💬 Discord 通知"]
+  Dash["🖥 ダッシュボード<br/>（ブラウザで閲覧）"]
+
+  Twitch -->|フォロー・配信 / チャット| ingest
+  notify -->|Webhook POST| Discord
+  ingest -->|/api/status| Dash
+  Discord --> User(["👤 ユーザー"])
+  Dash --> User
 
   classDef iface fill:#5865F2,stroke:#2b2f77,color:#fff,font-weight:bold;
-  class Discord,Browser iface;
-
-  %% 上段グループの外枠を透明化（見た目はネストなし）
-  style pipeline fill:none,stroke:none;
+  class Discord,Dash iface;
+  classDef person fill:#ffb703,stroke:#9a6b00,color:#000,font-weight:bold;
+  class User person;
 ```
 
 ---
