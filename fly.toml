@@ -1,6 +1,11 @@
 app = "chatgust"
 primary_region = "nrt"
 
+# このアプリは全配信を1プロセスで監視するシングルトン構成。
+# 複数マシンが動くと検知・通知が多重化（Discord通知が二重に届く）するため、
+# デプロイ後は必ず `flyctl scale count 1 -a chatgust` で1台に固定すること。
+# （マシン台数は fly.toml では宣言できず、scale コマンドで管理する）
+
 [build]
 
 [http_service]

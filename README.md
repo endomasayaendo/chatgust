@@ -94,9 +94,16 @@ flyctl auth login
 flyctl apps create chatgust        # アプリ名は任意
 flyctl secrets import < .env
 flyctl deploy
+flyctl scale count 1 -a chatgust   # 必ず1台に固定（重要・下記Note参照）
 ```
 
 デプロイ後は `https://<app-name>.fly.dev` でダッシュボードにアクセスできる。
+
+> **Note: 必ず1インスタンスで動かすこと**  
+> 本アプリは「1プロセスが全配信を監視する」シングルトン構成。`fly launch` はデフォルトで
+> マシンを2台作ることがあり、その場合**両方が独立して検知・通知するため Discord 通知が二重に届く**。
+> `flyctl scale count 1 -a <app-name>` で必ず1台に固定する。
+> 台数は `flyctl machines list -a <app-name>` で確認できる（`started` が1台ならOK）。
 
 > **Note**  
 > Fly.io の無料枠で動作する。`fly.toml` の `primary_region = "nrt"` は東京リージョン。変更する場合は `flyctl platform regions` で一覧を確認する。
@@ -122,7 +129,7 @@ flyctl deploy
 アラート条件（current_rate >= MIN_RATE かつ クールダウン経過 が前提）:
 
   ① z スコア検知（規模非依存・メイン）:
-     current_rate >= baseline + SPIKE_Z × stddev   （デフォルト: 2.5σ）
+     current_rate >= baseline + SPIKE_Z × stddev   （デフォルト: 3.0σ）
 
   ② 乗算フォールバック（ばらつきが極端に小さいチャット向け）:
      current_rate >= baseline × SPIKE_THRESHOLD     （デフォルト: 8倍）
@@ -143,7 +150,7 @@ baseline < 1 の場合（配信開始直後など）:
 
 | 変数 | デフォルト | 説明 |
 |------|-----------|------|
-| `SPIKE_Z` | `2.5` | 平常の平均から何σ超えたらアラートを出すか（小さいほど敏感） |
+| `SPIKE_Z` | `3.0` | 平常の平均から何σ超えたらアラートを出すか（小さいほど敏感） |
 | `SPIKE_THRESHOLD` | `8` | 乗算フォールバックの倍率（ばらつきが極小のチャット向け） |
 | `MIN_RATE` | `5` | アラートに必要な最低メッセージ数（30秒） |
 | `COOLDOWN_MIN` | `5` | 同チャンネルへの連続アラートを防ぐ間隔（分） |

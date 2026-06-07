@@ -22,7 +22,7 @@ const {
   DASHBOARD_PASSWORD,
   PORT = "3000",
   SPIKE_THRESHOLD = "8",
-  SPIKE_Z = "2.5",
+  SPIKE_Z = "3.0",
   MIN_RATE = "5",
   COOLDOWN_MIN = "5",
 } = process.env;
