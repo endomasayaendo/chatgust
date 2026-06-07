@@ -22,6 +22,7 @@ const {
   DASHBOARD_PASSWORD,
   PORT = "3000",
   SPIKE_THRESHOLD = "8",
+  SPIKE_Z = "2.5",
   MIN_RATE = "5",
   COOLDOWN_MIN = "5",
 } = process.env;
@@ -35,11 +36,16 @@ if (!TWITCH_CLIENT_ID || !currentToken || !DISCORD_WEBHOOK_URL) {
 }
 
 const spikeThreshold = Number(SPIKE_THRESHOLD);
+const spikeZ = Number(SPIKE_Z);
 const minRate = Number(MIN_RATE);
 const cooldownMin = Number(COOLDOWN_MIN);
 
 if (!Number.isFinite(spikeThreshold) || spikeThreshold <= 0) {
   console.error(`Invalid SPIKE_THRESHOLD: "${SPIKE_THRESHOLD}". Must be a positive number.`);
+  process.exit(1);
+}
+if (!Number.isFinite(spikeZ) || spikeZ <= 0) {
+  console.error(`Invalid SPIKE_Z: "${SPIKE_Z}". Must be a positive number.`);
   process.exit(1);
 }
 if (!Number.isFinite(minRate) || minRate <= 0) {
@@ -106,7 +112,8 @@ const monitor = new ChatMonitor(
     }).catch((err: Error) => console.error("[notifier]", err.message));
   },
   spikeThreshold,
-  minRate
+  minRate,
+  spikeZ
 );
 
 let userId = "";
@@ -158,6 +165,7 @@ app.get("/api/status", (_req, res) => {
     recentAlerts: recentAlerts.slice(0, 20),
     config: {
       spikeThreshold,
+      spikeZ,
       minRate,
       cooldownMin,
     },
