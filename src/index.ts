@@ -14,12 +14,14 @@ import {
 } from "./twitchApi.js";
 import { ChatMonitor } from "./chatMonitor.js";
 import { sendDiscordAlert } from "./notifier.js";
+import { parseAllowlist, filterChannels } from "./notifyFilter.js";
 
 const {
   TWITCH_CLIENT_ID,
   TWITCH_CLIENT_SECRET,
   DISCORD_WEBHOOK_URL,
   DASHBOARD_PASSWORD,
+  NOTIFY_CHANNELS,
   PORT = "3000",
   SPIKE_THRESHOLD = "8",
   SPIKE_Z = "3.0",
@@ -55,6 +57,13 @@ if (!Number.isFinite(minRate) || minRate <= 0) {
 if (!Number.isFinite(cooldownMin) || cooldownMin <= 0) {
   console.error(`Invalid COOLDOWN_MIN: "${COOLDOWN_MIN}". Must be a positive number.`);
   process.exit(1);
+}
+
+// 通知対象の絞り込み（許可リスト）。カンマ区切りのチャンネル login を指定すると、
+// そのチャンネルだけを監視・通知する。未設定ならフォロー中のライブ配信すべてが対象。
+const notifyChannels = parseAllowlist(NOTIFY_CHANNELS);
+if (notifyChannels.size > 0) {
+  console.log(`[config] Notify allowlist: ${[...notifyChannels].join(", ")}`);
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -125,7 +134,8 @@ async function syncStreams(): Promise<void> {
       userId = user.id;
     }
     const followed = await getFollowedChannels(TWITCH_CLIENT_ID!, currentToken, userId);
-    const live = await getLiveStreams(TWITCH_CLIENT_ID!, currentToken, followed);
+    const targets = filterChannels(followed, notifyChannels);
+    const live = await getLiveStreams(TWITCH_CLIENT_ID!, currentToken, targets);
 
     const liveSet = new Set(live.map((s) => s.login));
     const currentSet = new Set(monitor.getStatus().map((s) => s.channel));
@@ -168,6 +178,7 @@ app.get("/api/status", (_req, res) => {
       spikeZ,
       minRate,
       cooldownMin,
+      notifyChannels: [...notifyChannels],
     },
   });
 });
