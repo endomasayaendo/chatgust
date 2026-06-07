@@ -19,12 +19,14 @@ export class ChatMonitor {
   private onAlert: AlertCallback;
   private spikeThreshold: number;
   private minRate: number;
+  private spikeZ: number;
   private reconnecting = false;
 
-  constructor(onAlert: AlertCallback, spikeThreshold: number, minRate: number) {
+  constructor(onAlert: AlertCallback, spikeThreshold: number, minRate: number, spikeZ: number) {
     this.onAlert = onAlert;
     this.spikeThreshold = spikeThreshold;
     this.minRate = minRate;
+    this.spikeZ = spikeZ;
   }
 
   private connect(): void {
@@ -72,7 +74,7 @@ export class ChatMonitor {
     if (this.timer) return;
     this.timer = setInterval(() => {
       for (const [channel, state] of this.channels) {
-        const isSpike = state.detector.isSpike(this.spikeThreshold, this.minRate);
+        const isSpike = state.detector.isSpike(this.spikeThreshold, this.minRate, this.spikeZ);
         if (isSpike && state.wasSpike) {
           this.onAlert(channel, state.detector.getRate(), state.detector.getBaseline());
         }

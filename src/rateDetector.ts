@@ -19,24 +19,56 @@ export class RateDetector {
     return this.timestamps.filter((t) => t > cutoff).length;
   }
 
-  getBaseline(): number {
+  /** 直前 BASELINE_SAMPLES 個のウィンドウそれぞれのメッセージ件数。 */
+  private getWindowCounts(): number[] {
     const now = Date.now();
     const windowMs = WINDOW_SECS * 1000;
-    let total = 0;
+    const counts: number[] = [];
     for (let i = 1; i <= BASELINE_SAMPLES; i++) {
       const end = now - i * windowMs;
       const start = end - windowMs;
-      total += this.timestamps.filter((t) => t >= start && t < end).length;
+      counts.push(this.timestamps.filter((t) => t >= start && t < end).length);
     }
-    return total / BASELINE_SAMPLES;
+    return counts;
   }
 
-  isSpike(threshold: number, minRate: number): boolean {
+  getBaseline(): number {
+    const counts = this.getWindowCounts();
+    return counts.reduce((sum, c) => sum + c, 0) / BASELINE_SAMPLES;
+  }
+
+  private static stdDev(counts: number[], mean: number): number {
+    const variance =
+      counts.reduce((sum, c) => sum + (c - mean) ** 2, 0) / counts.length;
+    return Math.sqrt(variance);
+  }
+
+  /**
+   * スパイク判定。配信規模に依存しないよう、平常の「平均 + ばらつき(標準偏差)」を
+   * 基準にした z スコアで判定する。ばらつきが極端に小さい場合は従来の乗算ルールに
+   * フォールバックする。
+   *
+   * @param threshold 乗算フォールバックの倍率（SPIKE_THRESHOLD）
+   * @param minRate   アラートに必要な最低件数
+   * @param z         平均から何σ超えたらスパイクとみなすか（SPIKE_Z）
+   */
+  isSpike(threshold: number, minRate: number, z: number): boolean {
     if (Date.now() - this.startedAt < WARMUP_MS) return false;
+
     const rate = this.getRate();
     if (rate < minRate) return false;
-    const baseline = this.getBaseline();
+
+    const counts = this.getWindowCounts();
+    const baseline = counts.reduce((sum, c) => sum + c, 0) / BASELINE_SAMPLES;
+
+    // 配信開始直後などベースラインがほぼ無い場合
     if (baseline < 1) return rate >= minRate * 2;
+
+    // z スコア: 平常のばらつきを大きく超えたら検知（小規模〜大手まで同じ基準で効く）
+    const sd = RateDetector.stdDev(counts, baseline);
+    if (sd > 0 && rate >= baseline + z * sd) return true;
+
+    // フォールバック: ばらつきが極端に小さいチャットでは従来の乗算ルール
     return rate >= baseline * threshold;
   }
 }
