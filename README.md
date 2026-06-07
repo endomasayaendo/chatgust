@@ -1,54 +1,120 @@
+<div align="center">
+
 # ChatGust
 
-Twitch のフォロー中配信を裏で監視し、チャットが急加速した瞬間だけ Discord に通知するツール。
-Fly.io に常駐させることで PC の電源を切っても動き続ける。
+**Twitch のフォロー中配信を裏で監視し、チャットが“爆発的に盛り上がった瞬間”だけ Discord に通知する常駐ボット**
+
+Fly.io に常駐させれば、PC の電源を切っても見逃さない。
+
+[![CI](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Node](https://img.shields.io/badge/Node-20-339933?logo=node.js&logoColor=white)
+![Deploy](https://img.shields.io/badge/Deploy-Fly.io-8B5CF6?logo=flydotio&logoColor=white)
+
+</div>
 
 ---
 
-## 機能
+「お気に入りの配信、気づいたら神回が終わってた…」をなくすためのツール。
+フォロー中のライブ配信のチャット流速を常時計測し、**普段より統計的に突出して伸びた瞬間**だけを検知して Discord に飛ばします。
 
-- フォロー中のライブ配信を1分ごとに自動取得・監視
-- IRC WebSocket 1本で全チャンネルのチャットを受信
-- 直近30秒の流速がベースラインの8倍以上になったら Discord に通知
-- ブラウザダッシュボードでリアルタイムの流速・アラート履歴を確認
+<!-- スクリーンショットを追加する場合: docs/dashboard.png を置いて下の行を有効化
+<p align="center"><img src="docs/dashboard.png" alt="ChatGust dashboard" width="700"></p>
+-->
+
+> [!NOTE]
+> 現状は **self-host 前提の開発者向けツール**です（各自が Twitch アプリ・Discord Webhook を用意し、自分の環境にデプロイして使う）。非エンジニアでも使えるホスト型サービス化は[今後の目標](#-今後の目標)を参照。
 
 ---
 
-## アーキテクチャ
+## ✨ 機能
+
+- 📡 フォロー中のライブ配信を **1分ごと**に自動取得・監視
+- 🔌 IRC WebSocket **1本**で全チャンネルのチャットを同時受信
+- 📈 **zスコア検知** — 平常時のばらつきから統計的に突出した瞬間を捕捉（配信規模に依存しない）
+- 🎯 通知対象チャンネルを **許可リスト**で絞り込み可能（`NOTIFY_CHANNELS`）
+- 🖥 ブラウザ**ダッシュボード**で監視中チャンネルの流速・ベースライン・アラート履歴をリアルタイム確認（`http://localhost:3000`）
+- 🔁 トークンの自動リフレッシュ／IRC 自動再接続で落ちにくい
+
+---
+
+## 🏗 アーキテクチャ
+
+Twitch を裏で監視し、結果を **ダッシュボード**と **Discord 通知**としてあなたに届ける。
 
 ```mermaid
-flowchart LR
-  TwitchAPI[Twitch API] -->|フォローリスト\n1分ごと| idx[index.ts]
-  IRC[Twitch IRC\nWebSocket] -->|PRIVMSG| mon[chatMonitor.ts]
-  idx -->|JOIN / PART| mon
-  mon -->|メッセージ記録| det[rateDetector.ts]
-  det -->|スパイク検知| mon
-  mon -->|アラート発火| idx
-  idx --> not[notifier.ts]
-  not -->|Webhook POST| Discord([Discord])
-  idx -->|/api/status\n5秒ごと| ui([ブラウザ])
+flowchart TB
+  %% 上段: Twitch → ChatGust（横並び）を1つのグループにネスト
+  subgraph pipeline[" "]
+    direction LR
+    subgraph Twitch
+      direction TB
+      API["Twitch API<br/>フォロー・配信取得"]
+      IRC["Twitch IRC<br/>チャット"]
+    end
+    subgraph ChatGust
+      direction TB
+      idx["index.ts<br/>オーケストレーター + サーバー"]
+      mon["chatMonitor.ts<br/>IRC 管理"]
+      det["rateDetector.ts<br/>流速 + zスコア"]
+      not["notifier.ts"]
+      idx -->|JOIN / PART| mon
+      mon -->|メッセージ記録| det
+      det -->|スパイク検知| mon
+      mon -->|アラート発火| idx
+      idx --> not
+    end
+    API -->|1分ごと| idx
+    IRC -->|PRIVMSG| mon
+  end
+
+  %% 下段: ユーザー（ChatGust の下）
+  subgraph User["ユーザー"]
+    direction TB
+    Discord["💬 Discord 通知"]
+    Browser["🖥 ダッシュボード（ブラウザ）"]
+    Discord ~~~ Browser
+  end
+
+  not -->|Webhook POST| Discord
+  idx -->|/api/status・5秒ごと| Browser
+
+  classDef iface fill:#5865F2,stroke:#2b2f77,color:#fff,font-weight:bold;
+  class Discord,Browser iface;
+
+  %% 上段グループの外枠を透明化（見た目はネストなし）
+  style pipeline fill:none,stroke:none;
 ```
 
 ---
 
-## 事前準備
+## 🚀 セットアップ
 
-### Twitch アプリの作成
+### 1. 事前準備
+
+<details>
+<summary><b>Twitch アプリの作成</b></summary>
 
 1. [Twitch Developer Console](https://dev.twitch.tv/console/apps) でアプリを新規作成
 2. OAuth リダイレクト URL に `http://localhost:22377/callback` を追加
 3. **Client ID** と **Client Secret** を控えておく
+</details>
 
-### Discord Webhook の作成
+<details>
+<summary><b>Discord Webhook の作成</b></summary>
 
-通知を送りたいチャンネルの **設定 → 連携サービス → ウェブフック** から Webhook を作成し、URL を控えておく。
+1. 通知を送りたいチャンネルの **設定（歯車アイコン）** を開く
+2. **連携サービス → ウェブフック → 新しいウェブフック** で作成
+3. 作成したウェブフックの **URL をコピー** して控えておく
 
----
+> 詳しい手順は [Discord 公式マニュアル「ウェブフックのご紹介」](https://support.discord.com/hc/ja/articles/228383668-%E3%82%A6%E3%82%A7%E3%83%96%E3%83%95%E3%83%83%E3%82%AF%E3%81%AE%E3%81%94%E7%B4%B9%E4%BB%8B) を参照。
 
-## セットアップ
+</details>
+
+### 2. インストール
 
 ```bash
-git clone https://github.com/<your-username>/chatgust.git
+git clone https://github.com/endomasayaendo/chatgust.git
 cd chatgust
 npm install
 cp .env.example .env
@@ -56,137 +122,161 @@ cp .env.example .env
 
 `.env` を開いて以下を記入：
 
-```
+```dotenv
 TWITCH_CLIENT_ID=<Client ID>
 TWITCH_CLIENT_SECRET=<Client Secret>
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
-### Twitch 認証（初回のみ）
+### 3. Twitch 認証（初回のみ）
 
 ```bash
 npm run auth
 ```
 
-ブラウザが開くので Twitch にログインする。認証が完了するとアクセストークンが `.env` に自動保存される。
+ブラウザが開くので Twitch にログイン。認証が完了するとアクセストークンが `.env` に自動保存される。
 
----
-
-## ローカルで起動
+### 4. 起動
 
 ```bash
 npm start
 ```
 
 `http://localhost:3000` でダッシュボードを確認できる。
+あとは起動したまま放置すれば、フォロー中の配信のチャットが盛り上がった瞬間に **Discord へ通知が届く**。
 
 ---
 
-## Fly.io へのデプロイ（常時稼働）
+## ☁️ Fly.io へのデプロイ（常時稼働）
 
 PC の電源に依存せず常時監視したい場合は Fly.io にデプロイする。
+**`<your-app-name>` は自分で決めた一意なアプリ名**に置き換えること（Fly のアプリ名は世界で一意）。
 
 ```bash
 # flyctl のインストール（未インストールの場合）
 # https://fly.io/docs/hands-on/install-flyctl/
 
 flyctl auth login
-flyctl apps create chatgust        # アプリ名は任意
-flyctl secrets import < .env
+flyctl apps create <your-app-name>          # 名前は世界で一意（既存名は使用不可）
+# ↑ 作成した名前を fly.toml の `app = "..."` に書き換える
+flyctl secrets import < .env                # TWITCH_*, DISCORD_WEBHOOK_URL など自分の認証情報
 flyctl deploy
-flyctl scale count 1 -a chatgust   # 必ず1台に固定（重要・下記Note参照）
+flyctl scale count 1 -a <your-app-name>     # 必ず1台に固定（重要・下記Note参照）
 ```
 
-デプロイ後は `https://<app-name>.fly.dev` でダッシュボードにアクセスできる。
+デプロイ後は `https://<your-app-name>.fly.dev` でダッシュボードにアクセスできる。
 
-> **Note: 必ず1インスタンスで動かすこと**  
-> 本アプリは「1プロセスが全配信を監視する」シングルトン構成。`fly launch` はデフォルトで
-> マシンを2台作ることがあり、その場合**両方が独立して検知・通知するため Discord 通知が二重に届く**。
-> `flyctl scale count 1 -a <app-name>` で必ず1台に固定する。
-> 台数は `flyctl machines list -a <app-name>` で確認できる（`started` が1台ならOK）。
+> [!IMPORTANT]
+> **必ず1インスタンスで動かすこと。**
+> 本アプリは「1プロセスが全配信を監視する」シングルトン構成。`fly launch` はデフォルトでマシンを2台作ることがあり、その場合**両方が独立して検知・通知するため Discord 通知が二重に届く**。
+> `flyctl scale count 1 -a <your-app-name>` で必ず1台に固定する。台数は `flyctl machines list -a <your-app-name>` で確認（`started` が1台ならOK）。
 
-> **Note**  
+> [!NOTE]
 > Fly.io の無料枠で動作する。`fly.toml` の `primary_region = "nrt"` は東京リージョン。変更する場合は `flyctl platform regions` で一覧を確認する。
 
-### GitHub Actions による自動デプロイ
+### GitHub Actions による自動デプロイ（任意）
 
-`main` ブランチへのプッシュで自動デプロイされる設定が含まれている。
-リポジトリの **Settings → Secrets and variables → Actions** に以下を登録する：
+`main` への push で、テスト通過後に自動デプロイできる（`ci.yml` → `cd.yml`）。使う場合は、フォーク先リポジトリの **Settings → Secrets and variables → Actions** に**自分の** Fly トークンを登録する：
 
-| Secret | 値 |
-|--------|----|
-| `FLY_API_TOKEN` | `flyctl tokens create deploy -a <app-name>` で発行したトークン |
+| Secret          | 値                                                                  |
+| --------------- | ------------------------------------------------------------------- |
+| `FLY_API_TOKEN` | `flyctl tokens create deploy -a <your-app-name>` で発行したトークン |
+
+> [!TIP]
+> GitHub Actions を使わず、手元から `flyctl deploy` するだけでも運用できる。その場合 `FLY_API_TOKEN` の登録は不要（`flyctl auth login` 済みの端末から実行するだけ）。
 
 ---
 
-## アラート検知ロジック
+## 🎚 アラート検知ロジック
 
-```
+```text
 直近30秒のメッセージ数              = current_rate
 直前10ウィンドウ（約5分間）の平均     = baseline
 直前10ウィンドウの標準偏差（ばらつき） = stddev
 
 アラート条件（current_rate >= MIN_RATE かつ クールダウン経過 が前提）:
 
-  ① z スコア検知（規模非依存・メイン）:
+  ① zスコア検知（規模非依存・メイン）:
      current_rate >= baseline + SPIKE_Z × stddev   （デフォルト: 3.0σ）
 
   ② 乗算フォールバック（ばらつきが極端に小さいチャット向け）:
      current_rate >= baseline × SPIKE_THRESHOLD     （デフォルト: 8倍）
 
-  ①または②のどちらかを満たすとアラート。
+  ① または ② のどちらかを満たすとアラート。
 
 baseline < 1 の場合（配信開始直後など）:
   current_rate >= MIN_RATE × 2 を閾値として使用
 ```
 
-> **なぜ z スコアか**
-> 「ベースラインの何倍」という乗算ルールだけだと、同接が多くチャットが速い配信ほど
-> 相対的な揺れが小さくなり（大数の法則）、8倍はほぼ達成不可能で通知が出ませんでした。
-> 平常時の「平均＋ばらつき(σ)」を基準にすることで、小規模配信から大手まで同じ感覚で検知できます。
-> 通知が多すぎる/少なすぎる場合は `SPIKE_Z` を上下させて調整してください（大きいほど鈍感）。
+> [!TIP]
+> **なぜ zスコアか** — 「ベースラインの何倍」という乗算ルールだけだと、同接が多くチャットが速い配信ほど相対的な揺れが小さくなり（大数の法則）、8倍はほぼ達成不可能で通知が出ませんでした。平常時の「平均＋ばらつき(σ)」を基準にすることで、小規模配信から大手まで同じ感覚で検知できます。通知が多すぎる/少なすぎる場合は `SPIKE_Z` を上下させて調整してください（**大きいほど鈍感**）。
 
-`.env` で以下の変数を変更することで調整できる：
+### ⚙️ 設定（環境変数）
 
-| 変数 | デフォルト | 説明 |
-|------|-----------|------|
-| `SPIKE_Z` | `3.0` | 平常の平均から何σ超えたらアラートを出すか（小さいほど敏感） |
-| `SPIKE_THRESHOLD` | `8` | 乗算フォールバックの倍率（ばらつきが極小のチャット向け） |
-| `MIN_RATE` | `5` | アラートに必要な最低メッセージ数（30秒） |
-| `COOLDOWN_MIN` | `5` | 同チャンネルへの連続アラートを防ぐ間隔（分） |
-| `NOTIFY_CHANNELS` | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象） |
-| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる |
+すべて任意。`.env`（ローカル）または `flyctl secrets set`（本番）で変更できる。
 
-`DASHBOARD_PASSWORD` を設定した場合のログイン情報：
+| 変数                 | デフォルト | 説明                                                                                                                 |
+| -------------------- | :--------: | -------------------------------------------------------------------------------------------------------------------- |
+| `SPIKE_Z`            |   `3.0`    | 平常の平均から何σ超えたらアラートを出すか（**小さいほど敏感**）                                                      |
+| `SPIKE_THRESHOLD`    |    `8`     | 乗算フォールバックの倍率（ばらつきが極小のチャット向け）                                                             |
+| `MIN_RATE`           |    `5`     | アラートに必要な最低メッセージ数（30秒）                                                                             |
+| `COOLDOWN_MIN`       |    `5`     | 同チャンネルへの連続アラートを防ぐ間隔（分）                                                                         |
+| `NOTIFY_CHANNELS`    | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象） |
+| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名 `admin` / パスワードは設定値）                             |
 
-- ユーザー名: `admin`
-- パスワード: `DASHBOARD_PASSWORD` に設定した値
-
-Fly.io に反映する場合は再デプロイ不要で以下のコマンドのみで OK：
+本番（Fly.io）への反映は再デプロイ不要。例：
 
 ```bash
-flyctl secrets set DASHBOARD_PASSWORD=<password> -a <app-name>
+flyctl secrets set SPIKE_Z=3.5 NOTIFY_CHANNELS=shroud,k4sen -a <your-app-name>
 ```
 
 ---
 
-## ファイル構成
+## 🧪 開発
 
+```bash
+npm test          # Vitest でユニットテスト
+npm run typecheck # tsc --noEmit で型チェック
 ```
+
+`main` への push / PR で CI（テスト＋型チェック）が自動実行される。
+
+---
+
+## 🗂 ファイル構成
+
+```text
 chatgust/
 ├── src/
 │   ├── index.ts        # Express サーバー + メインオーケストレーター
 │   ├── auth.ts         # 初回 Twitch 認証スクリプト（ローカルのみ実行）
 │   ├── twitchApi.ts    # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
 │   ├── chatMonitor.ts  # IRC WebSocket 管理（1接続で全チャンネルを JOIN）
-│   ├── rateDetector.ts # 流速計算（スライディングウィンドウ）
-│   └── notifier.ts     # Discord Webhook 送信
+│   ├── rateDetector.ts # 流速計算（スライディングウィンドウ + zスコア）
+│   ├── notifier.ts     # Discord Webhook 送信
+│   └── notifyFilter.ts # 通知対象の絞り込み（許可リスト）
+├── test/               # Vitest テスト
 ├── public/
 │   ├── index.html      # ダッシュボード UI
 │   └── app.js          # 5秒ごとに /api/status をポーリング
 ├── .github/workflows/
-│   └── deploy.yml      # GitHub Actions 自動デプロイ
+│   ├── ci.yml          # テスト + 型チェック
+│   └── cd.yml          # CI 成功後に Fly.io へ自動デプロイ
 ├── fly.toml            # Fly.io 設定
 ├── Dockerfile
 └── .env.example
 ```
+
+---
+
+## 🎯 今後の目標
+
+**いまの形:** 各自が自分の環境にデプロイして使う self-host ツール。動かすには Twitch アプリの作成や Fly.io へのデプロイなど、ある程度の技術的な準備が必要で、主に開発者向け。
+
+**目指す姿:** 技術知識がなくても、ブラウザだけで使える **ホスト型サービス**。運営側がアプリを1つ運用し、ユーザーは次の操作だけで使えるようにしたい。
+
+- **Twitch でログインするだけ** — 自分で Twitch アプリを作る必要なし
+- **Discord の Webhook URL を貼るだけ** で通知先を設定 — 自分でサーバーにデプロイする必要なし
+- 監視したい配信・通知のしきい値・通知リストを Web 画面から設定
+
+実現には、ユーザーごとの設定を保存する仕組みやログイン基盤など、今の「1人用」構成からそれなりの作り替えが必要になる見込み。
