@@ -1,109 +1,75 @@
-import WebSocket from "ws";
-import { RateDetector } from "./rateDetector.js";
+import { RateDetector, type SpikeDetector } from "./rateDetector.js";
+import { IrcClient } from "./ircClient.js";
+import { ConsecutiveSpikePolicy, type SpikePolicy } from "./spikePolicy.js";
 
-export type AlertCallback = (channel: string, rate: number, baseline: number) => void;
+export type AlertCallback = (
+  channel: string,
+  rate: number,
+  baseline: number,
+  title: string
+) => void;
+
+export interface DetectorConfig {
+  spikeThreshold: number;
+  minRate: number;
+  spikeZ: number;
+}
 
 interface ChannelState {
-  detector: RateDetector;
+  detector: SpikeDetector;
   title: string;
-  wasSpike: boolean;
 }
 
 const CHECK_INTERVAL_MS = 5_000;
-const RECONNECT_DELAY_MS = 10_000;
 
+/**
+ * 監視中チャンネルの状態を束ね、チャットの盛り上がり検知からアラート発火までを取り持つ。
+ * チャンネルごとに検知器（SpikeDetector）を保持し、一定間隔でスパイク判定を行い、
+ * SpikePolicy が発火を認めたものを onAlert で通知する。チャットの受信は IrcClient が担う。
+ */
 export class ChatMonitor {
-  private ws: WebSocket | null = null;
-  private channels = new Map<string, ChannelState>();
+  private readonly channels = new Map<string, ChannelState>();
   private timer: ReturnType<typeof setInterval> | null = null;
-  private onAlert: AlertCallback;
-  private spikeThreshold: number;
-  private minRate: number;
-  private spikeZ: number;
-  private reconnecting = false;
 
-  constructor(onAlert: AlertCallback, spikeThreshold: number, minRate: number, spikeZ: number) {
-    this.onAlert = onAlert;
-    this.spikeThreshold = spikeThreshold;
-    this.minRate = minRate;
-    this.spikeZ = spikeZ;
-  }
-
-  private connect(): void {
-    const ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
-    this.ws = ws;
-
-    ws.on("open", () => {
-      ws.send("PASS SCHMOOPIIE");
-      ws.send(`NICK justinfan${Math.floor(Math.random() * 99999)}`);
-      for (const channel of this.channels.keys()) {
-        ws.send(`JOIN #${channel}`);
-      }
-      console.log(`[IRC] Connected, joined ${this.channels.size} channels`);
-    });
-
-    ws.on("message", (data: Buffer) => {
-      const msg = data.toString();
-      if (msg.startsWith("PING")) {
-        ws.send("PONG :tmi.twitch.tv");
-        return;
-      }
-      const match = msg.match(/PRIVMSG #(\w+)/);
-      if (match) {
-        this.channels.get(match[1])?.detector.addMessage();
-      }
-    });
-
-    ws.on("close", () => {
-      if (!this.reconnecting && this.channels.size > 0) {
-        this.reconnecting = true;
-        console.log(`[IRC] Disconnected — reconnecting in ${RECONNECT_DELAY_MS / 1000}s`);
-        setTimeout(() => {
-          this.reconnecting = false;
-          this.connect();
-        }, RECONNECT_DELAY_MS);
-      }
-    });
-
-    ws.on("error", (err: Error) => {
-      console.error("[IRC] WebSocket error:", err.message);
-    });
-  }
+  constructor(
+    private readonly onAlert: AlertCallback,
+    private readonly cfg: DetectorConfig,
+    private readonly irc: IrcClient = new IrcClient((channel) =>
+      this.channels.get(channel)?.detector.addMessage()
+    ),
+    private readonly policy: SpikePolicy = new ConsecutiveSpikePolicy(),
+    private readonly detectorFactory: () => SpikeDetector = () => new RateDetector()
+  ) {}
 
   private startTimer(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
+      const { spikeThreshold, minRate, spikeZ } = this.cfg;
       for (const [channel, state] of this.channels) {
-        const isSpike = state.detector.isSpike(this.spikeThreshold, this.minRate, this.spikeZ);
-        if (isSpike && state.wasSpike) {
-          this.onAlert(channel, state.detector.getRate(), state.detector.getBaseline());
+        const isSpike = state.detector.isSpike(spikeThreshold, minRate, spikeZ);
+        if (this.policy.confirm(channel, isSpike)) {
+          this.onAlert(channel, state.detector.getRate(), state.detector.getBaseline(), state.title);
         }
-        state.wasSpike = isSpike;
       }
     }, CHECK_INTERVAL_MS);
   }
 
   join(channel: string, title: string): void {
-    if (this.channels.has(channel)) {
-      this.channels.get(channel)!.title = title;
+    const existing = this.channels.get(channel);
+    if (existing) {
+      existing.title = title;
       return;
     }
-    this.channels.set(channel, { detector: new RateDetector(), title, wasSpike: false });
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      if (!this.ws) this.connect();
-    } else {
-      this.ws.send(`JOIN #${channel}`);
-    }
+    this.channels.set(channel, { detector: this.detectorFactory(), title });
+    this.irc.join(channel);
     this.startTimer();
     console.log(`[IRC] Joined #${channel}`);
   }
 
   part(channel: string): void {
-    if (!this.channels.has(channel)) return;
-    this.channels.delete(channel);
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(`PART #${channel}`);
-    }
+    if (!this.channels.delete(channel)) return;
+    this.policy.forget(channel);
+    this.irc.part(channel);
     console.log(`[IRC] Parted #${channel}`);
   }
 
@@ -119,6 +85,6 @@ export class ChatMonitor {
   destroy(): void {
     if (this.timer) clearInterval(this.timer);
     this.channels.clear();
-    this.ws?.close();
+    this.irc.destroy();
   }
 }
