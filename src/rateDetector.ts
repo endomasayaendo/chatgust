@@ -3,7 +3,18 @@ const BASELINE_SAMPLES = 10;
 const MAX_HISTORY_MS = (BASELINE_SAMPLES + 1) * WINDOW_SECS * 1000;
 const WARMUP_MS = 2 * 60 * 1000; // 2 minutes before alerts are allowed
 
-export class RateDetector {
+/**
+ * チャットの流速計測とスパイク判定を提供する検知器のインターフェース。
+ * メッセージの記録、直近レート・ベースラインの取得、スパイク判定を担う。
+ */
+export interface SpikeDetector {
+  addMessage(): void;
+  getRate(): number;
+  getBaseline(): number;
+  isSpike(threshold: number, minRate: number, z: number): boolean;
+}
+
+export class RateDetector implements SpikeDetector {
   private timestamps: number[] = [];
   private readonly startedAt = Date.now();
 

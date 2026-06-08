@@ -237,14 +237,21 @@ npm run typecheck # tsc --noEmit で型チェック
 ```text
 chatgust/
 ├── src/
-│   ├── index.ts        # Express サーバー + メインオーケストレーター
-│   ├── auth.ts         # 初回 Twitch 認証スクリプト（ローカルのみ実行）
-│   ├── twitchApi.ts    # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
-│   ├── chatMonitor.ts  # IRC WebSocket 管理（1接続で全チャンネルを JOIN）
-│   ├── rateDetector.ts # 流速計算（スライディングウィンドウ + zスコア）
-│   ├── notifier.ts     # Discord Webhook 送信
-│   └── notifyFilter.ts # 通知対象の絞り込み（許可リスト）
-├── test/               # Vitest テスト
+│   ├── index.ts          # composition root（依存の生成・配線・起動のみ）
+│   ├── config.ts         # 環境変数のパース・バリデーション（型付き Config）
+│   ├── auth.ts           # 初回 Twitch 認証スクリプト（ローカルのみ実行）
+│   ├── tokenStore.ts     # トークンの保持・リフレッシュ・.env への永続化
+│   ├── twitchApi.ts      # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
+│   ├── streamSync.ts     # フォロー→絞り込み→ライブ取得→監視へ反映（定期同期）
+│   ├── chatMonitor.ts    # 検知コーディネーター（detector・policy・irc を束ねる）
+│   ├── ircClient.ts      # IRC WebSocket 転送（1接続で全チャンネルを JOIN）
+│   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ + zスコア）
+│   ├── spikePolicy.ts    # アラート発火ポリシー（2連続スパイクで確定）
+│   ├── alertDispatcher.ts# クールダウン・履歴・通知の送出
+│   ├── notifier.ts       # Discord Webhook 送信（Notifier 抽象 + DiscordNotifier）
+│   ├── notifyFilter.ts   # 通知対象の絞り込み（許可リスト）
+│   └── server.ts         # Express アプリ（ダッシュボード配信 + /api/status + Basic認証）
+├── test/                 # Vitest テスト
 ├── public/
 │   ├── index.html      # ダッシュボード UI
 │   └── app.js          # 5秒ごとに /api/status をポーリング

@@ -6,6 +6,23 @@ export interface AlertPayload {
   streamUrl: string;
 }
 
+/**
+ * アラートの通知先を表すインターフェース。
+ * 送信先（Discord、Slack など）ごとに send を実装する。
+ */
+export interface Notifier {
+  send(payload: AlertPayload): Promise<void>;
+}
+
+/** Discord Webhook へアラートを送信する Notifier 実装。 */
+export class DiscordNotifier implements Notifier {
+  constructor(private readonly webhookUrl: string) {}
+
+  send(payload: AlertPayload): Promise<void> {
+    return sendDiscordAlert(this.webhookUrl, payload);
+  }
+}
+
 export async function sendDiscordAlert(
   webhookUrl: string,
   { channel, title, rate, baseline, streamUrl }: AlertPayload
