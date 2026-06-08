@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="ChatGust" width="180">
+
 # ChatGust
 
 **Twitch のフォロー中配信を裏で監視し、チャットが“爆発的に盛り上がった瞬間”だけ Discord に通知する常駐ボット**
