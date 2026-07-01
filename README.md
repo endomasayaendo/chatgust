@@ -6,8 +6,6 @@
 
 **Twitch のフォロー中配信を裏で監視し、チャットが“爆発的に盛り上がった瞬間”だけ Discord に通知する常駐ボット**
 
-Fly.io に常駐させれば、PC の電源を切っても見逃さない。
-
 [![CI](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-20-339933?logo=node.js&logoColor=white)
