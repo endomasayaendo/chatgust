@@ -6,7 +6,7 @@
 
 **Twitch のフォロー中配信を裏で監視し、チャットが“爆発的に盛り上がった瞬間”だけ Discord に通知する常駐ボット**
 
-[![CI](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/endomasayaendo/chatpulse/actions/workflows/ci.yml)
+[![CI](https://github.com/endomasayaendo/chatgust/actions/workflows/ci.yml/badge.svg)](https://github.com/endomasayaendo/chatgust/actions/workflows/ci.yml)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-20-339933?logo=node.js&logoColor=white)
 ![Deploy](https://img.shields.io/badge/Deploy-Fly.io-8B5CF6?logo=flydotio&logoColor=white)
@@ -181,7 +181,7 @@ flyctl scale count 1 -a <your-app-name>     # 必ず1台に固定（重要・下
 直前10ウィンドウ（約5分間）の平均     = baseline
 直前10ウィンドウの標準偏差（ばらつき） = stddev
 
-アラート条件（current_rate >= MIN_RATE かつ クールダウン経過 が前提）:
+スパイク判定（current_rate >= MIN_RATE が前提。起動後2分間はウォームアップとして判定しない）:
 
   ① zスコア検知（規模非依存・メイン）:
      current_rate >= baseline + SPIKE_Z × stddev   （デフォルト: 3.0σ）
@@ -189,14 +189,18 @@ flyctl scale count 1 -a <your-app-name>     # 必ず1台に固定（重要・下
   ② 乗算フォールバック（ばらつきが極端に小さいチャット向け）:
      current_rate >= baseline × SPIKE_THRESHOLD     （デフォルト: 8倍）
 
-  ① または ② のどちらかを満たすとアラート。
+  ① または ② のどちらかを満たすと「スパイク」と判定。
 
 baseline < 1 の場合（配信開始直後など）:
-  current_rate >= MIN_RATE × 2 を閾値として使用
+  current_rate >= MIN_RATE × 2 をスパイク判定の閾値として使用
+
+アラート発火:
+  スパイク判定が2回連続したチャンネルで、かつクールダウン経過後に Discord へ通知。
+  （単発のスパイクは瞬間的な揺れとみなして見送る）
 ```
 
 > [!TIP]
-> **なぜ zスコアか** — 「ベースラインの何倍」という乗算ルールだけだと、同接が多くチャットが速い配信ほど相対的な揺れが小さくなり（大数の法則）、8倍はほぼ達成不可能で通知が出ませんでした。平常時の「平均＋ばらつき(σ)」を基準にすることで、小規模配信から大手まで同じ感覚で検知できます。通知が多すぎる/少なすぎる場合は `SPIKE_Z` を上下させて調整してください（**大きいほど鈍感**）。
+> **なぜ zスコアか** — 「ベースラインの何倍」という乗算ルールだけだと、同接が多くチャットが速い配信ほど相対的な揺れが小さくなり、8倍はほぼ達成不可能で通知が出ませんでした。平常時の「平均＋ばらつき(σ)」を基準にすることで、小規模配信から大手まで同じ感覚で検知できます。通知が多すぎる/少なすぎる場合は `SPIKE_Z` を上下させて調整してください（**大きいほど鈍感**）。
 
 ### ⚙️ 設定（環境変数）
 
