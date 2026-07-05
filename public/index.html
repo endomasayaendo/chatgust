@@ -36,6 +36,14 @@
     .alert-info { font-size: 0.82rem; color: #adadb8; }
     .alert-time { margin-left: auto; font-size: 0.75rem; color: #6b6b7a; white-space: nowrap; }
 
+    .reports { list-style: none; }
+    .report-item { margin-bottom: 8px; }
+    .report-item a { display: flex; align-items: center; gap: 12px; background: #1f1f23; border-radius: 6px; padding: 10px 14px; text-decoration: none; color: inherit; border-left: 4px solid #a970ff; transition: background .15s; }
+    .report-item a:hover { background: #26262b; }
+    .report-channel { font-weight: 600; min-width: 120px; }
+    .report-title { font-size: 0.82rem; color: #adadb8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .report-meta { margin-left: auto; font-size: 0.75rem; color: #6b6b7a; white-space: nowrap; }
+
     .empty { color: #adadb8; font-size: 0.85rem; padding: 12px 0; }
     .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #00b894; margin-right: 6px; animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
@@ -50,6 +58,9 @@
 
   <p class="section-title">最近のアラート</p>
   <ul class="alerts" id="alerts"><li class="empty">アラートはまだありません</li></ul>
+
+  <p class="section-title">過去の配信レポート</p>
+  <ul class="reports" id="reports"><li class="empty">読み込み中...</li></ul>
 
   <script src="app.js"></script>
 </body>

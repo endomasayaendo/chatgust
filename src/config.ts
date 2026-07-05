@@ -17,6 +17,8 @@ export interface Config {
   cooldownMin: number;
   accessToken: string;
   refreshToken: string;
+  dataDir: string;
+  publicBaseUrl: string;
 }
 
 /** 正の有限数であることを保証する。満たさなければ分かりやすいメッセージで throw。 */
@@ -46,9 +48,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     SPIKE_Z = "3.0",
     MIN_RATE = "5",
     COOLDOWN_MIN = "5",
+    DATA_DIR = "./data",
+    PUBLIC_BASE_URL,
   } = env;
 
   const accessToken = TWITCH_ACCESS_TOKEN ?? "";
+  const port = positiveNumber(PORT, "PORT");
 
   if (!TWITCH_CLIENT_ID || !accessToken || !DISCORD_WEBHOOK_URL) {
     throw new Error(
@@ -62,12 +67,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     discordWebhookUrl: DISCORD_WEBHOOK_URL,
     dashboardPassword: DASHBOARD_PASSWORD,
     notifyChannels: parseAllowlist(NOTIFY_CHANNELS),
-    port: Number(PORT), // 数値化のみ。app.listen にそのまま渡す
+    port,
     spikeThreshold: positiveNumber(SPIKE_THRESHOLD, "SPIKE_THRESHOLD"),
     spikeZ: positiveNumber(SPIKE_Z, "SPIKE_Z"),
     minRate: positiveNumber(MIN_RATE, "MIN_RATE"),
     cooldownMin: positiveNumber(COOLDOWN_MIN, "COOLDOWN_MIN"),
     accessToken,
     refreshToken: TWITCH_REFRESH_TOKEN ?? "",
+    dataDir: DATA_DIR,
+    // Discord のレポートリンクに使う公開URLの基点。未設定ならローカル前提の値。
+    publicBaseUrl: PUBLIC_BASE_URL ?? `http://localhost:${port}`,
   };
 }
