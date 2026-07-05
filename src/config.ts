@@ -74,8 +74,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cooldownMin: positiveNumber(COOLDOWN_MIN, "COOLDOWN_MIN"),
     accessToken,
     refreshToken: TWITCH_REFRESH_TOKEN ?? "",
-    dataDir: DATA_DIR,
-    // Discord のレポートリンクに使う公開URLの基点。未設定ならローカル前提の値。
-    publicBaseUrl: PUBLIC_BASE_URL ?? `http://localhost:${port}`,
+    // 空文字（.env に `DATA_DIR=` のように空で置かれる）も未設定扱いにするため || を使う。
+    dataDir: DATA_DIR || "./data",
+    // Discord のレポートリンクに使う公開URLの基点。未設定・空ならローカル前提の値にフォールバック。
+    publicBaseUrl: PUBLIC_BASE_URL || `http://localhost:${port}`,
   };
 }

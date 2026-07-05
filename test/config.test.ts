@@ -40,6 +40,12 @@ describe("loadConfig", () => {
     expect(cfg.publicBaseUrl).toBe("https://chatgust.fly.dev");
   });
 
+  it("空文字の DATA_DIR / PUBLIC_BASE_URL は既定にフォールバックする（.env の空値対策）", () => {
+    const cfg = loadConfig({ ...base, DATA_DIR: "", PUBLIC_BASE_URL: "" });
+    expect(cfg.dataDir).toBe("./data");
+    expect(cfg.publicBaseUrl).toBe("http://localhost:3000");
+  });
+
   it("NOTIFY_CHANNELS を許可リスト集合へパースする", () => {
     const cfg = loadConfig({ ...base, NOTIFY_CHANNELS: "Foo, BAR" });
     expect([...cfg.notifyChannels]).toEqual(["foo", "bar"]);
