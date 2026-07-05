@@ -1,5 +1,6 @@
 const grid = document.getElementById("grid");
 const alertsList = document.getElementById("alerts");
+const reportsList = document.getElementById("reports");
 
 function esc(str) {
   return String(str)
@@ -20,6 +21,22 @@ function cardColor(rate, baseline, threshold) {
 function formatTime(iso) {
   const d = new Date(iso);
   return d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDateTime(ms) {
+  return new Date(ms).toLocaleString("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(startedAt, endedAt) {
+  if (!endedAt) return "配信中";
+  const min = Math.round((endedAt - startedAt) / 60000);
+  if (min >= 60) return `${Math.floor(min / 60)}時間${min % 60}分`;
+  return `${min}分`;
 }
 
 async function refresh() {
@@ -66,5 +83,32 @@ async function refresh() {
   }
 }
 
+async function refreshReports() {
+  try {
+    const res = await fetch("/api/reports");
+    const { reports } = await res.json();
+
+    if (reports.length === 0) {
+      reportsList.innerHTML = '<li class="empty">配信が終わるとここに振り返りが並びます</li>';
+      return;
+    }
+
+    reportsList.innerHTML = reports
+      .map(({ id, channel, title, startedAt, endedAt, sampleCount }) => `
+        <li class="report-item">
+          <a href="/reports/${encodeURIComponent(id)}">
+            <span class="report-channel">${esc(channel)}</span>
+            <span class="report-title">${esc(title) || "–"}</span>
+            <span class="report-meta">${formatDateTime(startedAt)} ｜ ${formatDuration(startedAt, endedAt)} ｜ ${sampleCount}点</span>
+          </a>
+        </li>`)
+      .join("");
+  } catch (e) {
+    console.error("reports fetch error:", e);
+  }
+}
+
 refresh();
+refreshReports();
 setInterval(refresh, 5_000);
+setInterval(refreshReports, 30_000);

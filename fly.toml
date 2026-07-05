@@ -8,12 +8,22 @@ primary_region = "nrt"
 
 [build]
 
+[env]
+  # 振り返りDBは永続ディスク（Volume）上に置く。下の [mounts] の destination と揃える。
+  DATA_DIR = "/data"
+
 [http_service]
   internal_port = 3000
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+# 振り返りレポートを再デプロイ・再起動をまたいで残すための永続ボリューム。
+# 事前に `flyctl volumes create chatgust_data --size 1 -a <your-app-name>` で作成しておく。
+[mounts]
+  source = "chatgust_data"
+  destination = "/data"
 
 [[vm]]
   memory = "256mb"

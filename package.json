@@ -6,17 +6,20 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
+    "dev:report": "tsx scripts/devReport.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
     "express-basic-auth": "^1.2.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.10",
