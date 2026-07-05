@@ -18,6 +18,8 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, SPIKE_Z: "0" })).toThrow(/SPIKE_Z/);
     expect(() => loadConfig({ ...base, MIN_RATE: "abc" })).toThrow(/MIN_RATE/);
     expect(() => loadConfig({ ...base, COOLDOWN_MIN: "-1" })).toThrow(/COOLDOWN_MIN/);
+    expect(() => loadConfig({ ...base, PORT: "abc" })).toThrow(/PORT/);
+    expect(() => loadConfig({ ...base, PORT: "0" })).toThrow(/PORT/);
   });
 
   it("デフォルト値を適用する", () => {
@@ -28,6 +30,20 @@ describe("loadConfig", () => {
     expect(cfg.cooldownMin).toBe(5);
     expect(cfg.port).toBe(3000);
     expect(cfg.notifyChannels.size).toBe(0);
+    expect(cfg.dataDir).toBe("./data");
+    expect(cfg.publicBaseUrl).toBe("http://localhost:3000");
+  });
+
+  it("DATA_DIR / PUBLIC_BASE_URL を上書きできる", () => {
+    const cfg = loadConfig({ ...base, DATA_DIR: "/data", PUBLIC_BASE_URL: "https://chatgust.fly.dev" });
+    expect(cfg.dataDir).toBe("/data");
+    expect(cfg.publicBaseUrl).toBe("https://chatgust.fly.dev");
+  });
+
+  it("空文字の DATA_DIR / PUBLIC_BASE_URL は既定にフォールバックする（.env の空値対策）", () => {
+    const cfg = loadConfig({ ...base, DATA_DIR: "", PUBLIC_BASE_URL: "" });
+    expect(cfg.dataDir).toBe("./data");
+    expect(cfg.publicBaseUrl).toBe("http://localhost:3000");
   });
 
   it("NOTIFY_CHANNELS を許可リスト集合へパースする", () => {

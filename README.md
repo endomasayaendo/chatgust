@@ -34,6 +34,7 @@
 - 📈 **zスコア検知** — 平常時のばらつきから統計的に突出した瞬間を捕捉（配信規模に依存しない）
 - 🎯 通知対象チャンネルを **許可リスト**で絞り込み可能（`NOTIFY_CHANNELS`）
 - 🖥 **ダッシュボード**(ブラウザ)で監視中チャンネルの流速・ベースライン・アラート履歴をリアルタイム確認
+- 📊 **振り返りレポート** — 配信ごとにチャット流速を記録し、配信終了時に「盛り上がり波形」を生成。Discord に振り返りリンクを通知
 - 🔁 トークンの自動リフレッシュ／IRC 自動再接続で落ちにくい
 
 ---
@@ -54,24 +55,33 @@ flowchart LR
     ingest["取得・受信<br/>index ・ chatMonitor"]
     detect["流速計測・スパイク検知<br/>rateDetector"]
     notify["通知生成<br/>notifier"]
+    record["記録・振り返り<br/>timelineRecorder → SQLite"]
     ingest --> detect --> notify
+    detect -->|5秒ごとの流速| record
   end
 
   %% --- ユーザーの受け取り口 ---
   Discord["💬 Discord 通知"]
   Dash["🖥 ダッシュボード<br/>（ブラウザで閲覧）"]
+  Report["📊 振り返りレポート<br/>/reports/:id 波形"]
 
   Twitch -->|フォロー・配信 / チャット| ingest
   notify -->|Webhook POST| Discord
+  record -->|配信終了時にリンク| Discord
+  record --> Report
   ingest -->|/api/status| Dash
   Discord --> User(["👤 ユーザー"])
   Dash --> User
+  Report --> User
 
   classDef iface fill:#5865F2,stroke:#2b2f77,color:#fff,font-weight:bold;
-  class Discord,Dash iface;
+  class Discord,Dash,Report iface;
   classDef person fill:#ffb703,stroke:#9a6b00,color:#000,font-weight:bold;
   class User person;
 ```
+
+> 通知（リアルタイム）と振り返り（事後）は、共通の流速計測（`rateDetector`）の上に並ぶ別系統。
+> 検知して通知する既存機能に対し、振り返りは流速を配信ごとに貯めて終了時に波形として見せる。
 
 ---
 
@@ -146,12 +156,17 @@ PC の電源に依存せず常時監視したい場合は Fly.io にデプロイ
 flyctl auth login
 flyctl apps create <your-app-name>          # 名前は世界で一意（既存名は使用不可）
 # ↑ 作成した名前を fly.toml の `app = "..."` に書き換える
+flyctl volumes create chatgust_data --size 1 -a <your-app-name>   # 振り返りDB用の永続ディスク（1GB・無料枠内）
 flyctl secrets import < .env                # TWITCH_*, DISCORD_WEBHOOK_URL など自分の認証情報
+flyctl secrets set PUBLIC_BASE_URL=https://<your-app-name>.fly.dev -a <your-app-name>  # 振り返りリンクの基点
 flyctl deploy
 flyctl scale count 1 -a <your-app-name>     # 必ず1台に固定（重要・下記Note参照）
 ```
 
 デプロイ後は `https://<your-app-name>.fly.dev` でダッシュボードにアクセスできる。
+
+> [!NOTE]
+> **振り返りレポートの永続化には Volume が必要。** Fly.io のマシンのディスクは再デプロイ・再起動のたびにまっさらに戻るため、`flyctl volumes create` で永続ディスクを作り（`fly.toml` の `[mounts]` が `/data` にマウント）、そこに SQLite DB を置いている。Volume を作らないと配信レポートが消え、Discord のリンクが 404 になる。`PUBLIC_BASE_URL` は Discord に送るリンクの絶対URLに使う（未設定だと `localhost` のリンクになる）。
 
 > [!IMPORTANT]
 > **必ず1インスタンスで動かすこと。**
@@ -214,6 +229,8 @@ baseline < 1 の場合（配信開始直後など）:
 | `COOLDOWN_MIN`       |    `5`     | 同チャンネルへの連続アラートを防ぐ間隔（分）                                                                         |
 | `NOTIFY_CHANNELS`    | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象） |
 | `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名 `admin` / パスワードは設定値）                             |
+| `DATA_DIR`           |  `./data`  | 振り返りDB(SQLite)の保存先。Fly.io では Volume のパス（`/data`）を指す                                               |
+| `PUBLIC_BASE_URL`    | `http://localhost:PORT` | Discord に送る振り返りリンクの基点。Fly.io では公開URL（`https://<app>.fly.dev`）を設定                 |
 
 本番（Fly.io）への反映は再デプロイ不要。例：
 
@@ -232,6 +249,22 @@ npm run typecheck # tsc --noEmit で型チェック
 
 `main` への push / PR で CI（テスト＋型チェック）が自動実行される。
 
+### 振り返りレポートの動作確認（配信終了を待たずに）
+
+レポートは本来「監視中の配信が終わった瞬間」に生成されるため、そのままだと確認に時間がかかる。
+開発用ハーネスでダミーの完了配信を注入し、実物のサーバー・DB・Discord通知でその場で確認できる：
+
+```bash
+npm run dev:report            # data-dev/ にダミー配信を作り、http://localhost:3000/reports/<id> で波形を配信
+npm run dev:report -- --notify # さらに Discord へ振り返りリンクを1通送る（リンク到達まで確認）
+```
+
+- 使い捨ての別DB `data-dev/`（gitignore）に隔離するので、通常運用の `data/` は汚れない。Ctrl+C で終了。
+- **リンクは常にローカル**（`http://localhost:PORT/reports/<id>`）を指す。ダミーレポートはローカルの `data-dev/` にしか無いため、本番の `PUBLIC_BASE_URL`（Fly のURL）を使うとリンクが本番に飛んで 404 になるのを避けている。LAN の別端末から開きたいときだけ `DEV_PUBLIC_BASE_URL` で上書き。
+- `--notify` の送信先は `DEV_DISCORD_WEBHOOK_URL`（あれば）→ 無ければ `DISCORD_WEBHOOK_URL`。**本番と同じ Webhook を使うとテスト投稿が本番チャンネルに届く**ので、混ぜたくなければ `DEV_DISCORD_WEBHOOK_URL` に別チャンネルの Webhook を設定する（未設定時は警告を出す）。
+- Discord を使わず、出力された `http://localhost:PORT/reports/<id>` をブラウザで直接開けば、本番に一切触れず波形とリンク解決を確認できる。
+- すでに `npm start` を動かしている場合はポートが衝突するので、片方を止めるか `PORT` を変える。
+
 ---
 
 ## 🗂 ファイル構成
@@ -245,18 +278,22 @@ chatgust/
 │   ├── tokenStore.ts     # トークンの保持・リフレッシュ・.env への永続化
 │   ├── twitchApi.ts      # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
 │   ├── streamSync.ts     # フォロー→絞り込み→ライブ取得→監視へ反映（定期同期）
-│   ├── chatMonitor.ts    # 検知コーディネーター（detector・policy・irc を束ねる）
+│   ├── chatMonitor.ts    # 検知コーディネーター（detector・policy・irc・SessionObserver を束ねる）
 │   ├── ircClient.ts      # IRC WebSocket 転送（1接続で全チャンネルを JOIN）
 │   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ + zスコア）
 │   ├── spikePolicy.ts    # アラート発火ポリシー（2連続スパイクで確定）
 │   ├── alertDispatcher.ts# クールダウン・履歴・通知の送出
-│   ├── notifier.ts       # Discord Webhook 送信（Notifier 抽象 + DiscordNotifier）
+│   ├── notifier.ts       # Discord Webhook 送信（アラート + 振り返りレポート通知）
 │   ├── notifyFilter.ts   # 通知対象の絞り込み（許可リスト）
-│   └── server.ts         # Express アプリ（ダッシュボード配信 + /api/status + Basic認証）
+│   ├── db.ts             # 振り返りDB（SQLite）の接続・スキーマ・WAL
+│   ├── timelineRepository.ts # 振り返りデータの永続化（sessions / samples の読み書き）
+│   ├── timelineRecorder.ts   # 配信ごとに流速を記録し終了時にレポート通知（SessionObserver 実装）
+│   ├── reportRenderer.ts     # 流速サンプル → 自己完結HTML（inline SVG 波形）
+│   └── server.ts         # Express アプリ（ダッシュボード + /api/status + /reports/:id + Basic認証）
 ├── test/                 # Vitest テスト
 ├── public/
-│   ├── index.html      # ダッシュボード UI
-│   └── app.js          # 5秒ごとに /api/status をポーリング
+│   ├── index.html      # ダッシュボード UI（監視・アラート・過去レポート一覧）
+│   └── app.js          # /api/status と /api/reports をポーリング
 ├── .github/workflows/
 │   ├── ci.yml          # テスト + 型チェック
 │   └── cd.yml          # CI 成功後に Fly.io へ自動デプロイ
