@@ -20,3 +20,14 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Fly と同じ Docker イメージが実際にビルド・起動できるかを PR 段階で検証する。
+  # （CI(test) は緑でも Dockerfile が壊れていると CD のビルドで落ちる、を防ぐ）
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t chatgust-ci .
+      - name: Verify better-sqlite3 loads in the image
+        run: docker run --rm chatgust-ci node -e "const D=require('better-sqlite3'); new D(':memory:').exec('create table t(x)'); console.log('better-sqlite3 OK')"
