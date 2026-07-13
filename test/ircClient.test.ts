@@ -103,9 +103,8 @@ describe("IrcClient", () => {
     expect(sockets[1].sent).toContain("JOIN #alice");
   });
 
-  // 回帰テスト: 本番で波形が全部 0（横棒線）になっていた原因。
-  // 全配信終了 → part で channels が空 → その状態で切断されると再接続されず、
-  // 閉じた ws が残るため、次に配信が始まって join しても接続されず永久に無音になっていた。
+  // 監視対象がゼロの間は接続を張り直さない。この「接続なし」状態から復帰できることが、
+  // 24時間稼働（全配信終了 → 切断 → 翌日再開）で流速が取れ続ける条件になる。
   it("全チャンネル part 後に切断されても、次の join で接続し直せる", () => {
     const received: string[] = [];
     const irc = new IrcClient((c) => received.push(c));
@@ -132,8 +131,7 @@ describe("IrcClient", () => {
     expect(received).toEqual(["bob"]);
   });
 
-  // 1フレームに複数行が入ることがある（Twitch はまとめて送ってくる）。
-  // 先頭1件しか数えないと流速が実際より小さく出る＝波形がなまる。
+  // 流速の計測はメッセージ1件も落とさないことが前提。Twitch は複数行を1フレームにまとめて送る。
   it("1フレームに複数の PRIVMSG が来たら、すべて数える", () => {
     const received: string[] = [];
     const irc = new IrcClient((c) => received.push(c));

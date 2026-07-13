@@ -27,8 +27,7 @@ export class IrcClient {
       console.log(`[IRC] Connected, joined ${this.channels.size} channels`);
     });
 
-    // 1フレームに複数行が入ってくる（Twitch はまとめて送る）。行ごとに処理しないと
-    // 先頭1件しか数えられず、流速が実際より小さく出てしまう。
+    // Twitch は複数の IRC 行を1フレームにまとめて送ってくる。1行 = 1メッセージ。
     ws.on("message", (data: Buffer) => {
       for (const line of data.toString().split("\r\n")) {
         if (line.startsWith("PING")) {
@@ -41,10 +40,10 @@ export class IrcClient {
     });
 
     ws.on("close", () => {
-      // 閉じたソケットを掴んだままにしない。残しておくと、監視対象がゼロのときに
-      // 再接続もされず join も素通りして、IRC が永久に無音になる。
+      // 不変条件: this.ws は生きている接続だけを指し、未接続なら null（join がこれを見て判断する）。
       if (this.ws === ws) this.ws = null;
 
+      // 監視対象がある間だけ接続を維持する。ゼロなら次の join まで張り直さない。
       if (!this.reconnecting && this.channels.size > 0) {
         this.reconnecting = true;
         console.log(`[IRC] Disconnected — reconnecting in ${RECONNECT_DELAY_MS / 1000}s`);
@@ -68,8 +67,8 @@ export class IrcClient {
       this.ws.send(`JOIN #${channel}`);
       return;
     }
-    // 接続中なら open ハンドラが、再接続待ちならそのタイマーが、いずれも
-    // this.channels の全チャンネルを JOIN する。それ以外（未接続・切断済み）は今つなぐ。
+    // 接続中なら open ハンドラが、再接続待ちならそのタイマーが、this.channels を丸ごと JOIN する。
+    // どちらでもない（＝未接続）ときだけ、ここで張る。
     if (!this.ws && !this.reconnecting) this.connect();
   }
 
