@@ -27,19 +27,24 @@ export class IrcClient {
       console.log(`[IRC] Connected, joined ${this.channels.size} channels`);
     });
 
+    // 1フレームに複数行が入ってくる（Twitch はまとめて送る）。行ごとに処理しないと
+    // 先頭1件しか数えられず、流速が実際より小さく出てしまう。
     ws.on("message", (data: Buffer) => {
-      const msg = data.toString();
-      if (msg.startsWith("PING")) {
-        ws.send("PONG :tmi.twitch.tv");
-        return;
-      }
-      const match = msg.match(/PRIVMSG #(\w+)/);
-      if (match) {
-        this.onMessage(match[1]);
+      for (const line of data.toString().split("\r\n")) {
+        if (line.startsWith("PING")) {
+          ws.send("PONG :tmi.twitch.tv");
+          continue;
+        }
+        const match = line.match(/PRIVMSG #(\w+)/);
+        if (match) this.onMessage(match[1]);
       }
     });
 
     ws.on("close", () => {
+      // 閉じたソケットを掴んだままにしない。残しておくと、監視対象がゼロのときに
+      // 再接続もされず join も素通りして、IRC が永久に無音になる。
+      if (this.ws === ws) this.ws = null;
+
       if (!this.reconnecting && this.channels.size > 0) {
         this.reconnecting = true;
         console.log(`[IRC] Disconnected — reconnecting in ${RECONNECT_DELAY_MS / 1000}s`);
@@ -58,12 +63,14 @@ export class IrcClient {
   join(channel: string): void {
     if (this.channels.has(channel)) return;
     this.channels.add(channel);
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      // 未接続なら接続を開始（open ハンドラが全チャンネルを JOIN する）
-      if (!this.ws) this.connect();
-    } else {
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(`JOIN #${channel}`);
+      return;
     }
+    // 接続中なら open ハンドラが、再接続待ちならそのタイマーが、いずれも
+    // this.channels の全チャンネルを JOIN する。それ以外（未接続・切断済み）は今つなぐ。
+    if (!this.ws && !this.reconnecting) this.connect();
   }
 
   part(channel: string): void {
