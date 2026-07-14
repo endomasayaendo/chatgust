@@ -16,7 +16,10 @@ class FakeWebSocket {
   readonly sent: string[] = [];
   private readonly handlers = new Map<string, (arg?: unknown) => void>();
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly options?: { handshakeTimeout?: number }
+  ) {
     sockets.push(this);
   }
 
@@ -155,5 +158,61 @@ describe("IrcClient", () => {
 
     expect(sockets[0].sent).toContain("PONG :tmi.twitch.tv");
     expect(received).toEqual(["alice"]);
+  });
+
+  // 受信は止めてはいけない。1行の処理が失敗しても、残りの行と以降のフレームは数え続ける。
+  it("onMessage が例外を投げても、同じフレームの残りの行を処理し続ける", () => {
+    const received: string[] = [];
+    const irc = new IrcClient((c) => {
+      received.push(c);
+      if (received.length === 1) throw new Error("boom");
+    });
+    irc.join("alice");
+    sockets[0].emitOpen();
+
+    expect(() =>
+      sockets[0].emitMessage(
+        privmsg("alice", "one") + privmsg("alice", "two") + privmsg("alice", "three")
+      )
+    ).not.toThrow();
+
+    expect(received).toHaveLength(3);
+  });
+
+  it("destroy 後は、保留中の再接続タイマーが発火しても接続を張らない", () => {
+    const irc = new IrcClient(() => {});
+    irc.join("alice");
+    sockets[0].emitOpen();
+
+    sockets[0].emitClose(); // 再接続タイマーが動き出す
+    expect(vi.getTimerCount()).toBe(1);
+
+    irc.destroy();
+    // タイマー自体が解除されていること（発火して何もしない、ではなく、そもそも残さない）。
+    // 保留中のタイマーは Node のイベントループを生かし続け、終了を遅らせる。
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.advanceTimersByTime(60_000);
+    expect(sockets).toHaveLength(1); // 新しい接続は作られない
+  });
+
+  it("再接続を待つ間に全配信が終わっていたら、接続を張り直さない", () => {
+    const irc = new IrcClient(() => {});
+    irc.join("alice");
+    sockets[0].emitOpen();
+
+    sockets[0].emitClose(); // 再接続タイマーが動き出す
+    irc.part("alice"); // 待っている10秒の間に配信が終わる
+
+    vi.advanceTimersByTime(10_000);
+
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("ハンドシェイクのタイムアウトを指定して接続する", () => {
+    const irc = new IrcClient(() => {});
+    irc.join("alice");
+
+    expect(sockets[0].options?.handshakeTimeout).toBeGreaterThan(0);
   });
 });
