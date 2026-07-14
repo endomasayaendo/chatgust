@@ -36,6 +36,50 @@ function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}` : `${m}:${pad(s)}`;
 }
 
+// NOTE: 時刻は必ず Asia/Tokyo を明示する。toLocaleString("ja-JP") はロケール（表記）だけを
+// 決め、TZ はサーバーOSに従う。Fly は region が nrt でも VM は UTC で動くため、TZ を固定しないと
+// レポートが9時間ずれる。閲覧者ローカルに任せず、配信の実時刻として JST を正とする。
+/** UTC ミリ秒を日本時間の「YYYY/MM/DD HH:MM」に整形。 */
+function jstDateTime(ms: number): string {
+  return new Date(ms).toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** UTC ミリ秒を日本時間の「HH:MM」に整形（ピーク時刻・終了時刻の表示用）。 */
+function jstTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * 波形から「有意な山」を非最大抑制（NMS）で最大 max 件選ぶ純粋関数。
+ * rate 降順に走査し、しきい値以上かつ既選択ピークと minGapMs 以上離れたものだけ採用する。
+ * これにより細かなジッターや同一の山の肩を重複して拾わず、離れた神場面候補だけを残す。
+ * 返り値は t 昇順（描画順）。
+ */
+function findPeaks(
+  samples: { t: number; rate: number }[],
+  opts: { max: number; minGapMs: number; minRate: number }
+): { t: number; rate: number }[] {
+  const chosen: { t: number; rate: number }[] = [];
+  for (const s of [...samples].sort((a, b) => b.rate - a.rate)) {
+    if (chosen.length >= opts.max) break;
+    if (s.rate < opts.minRate) break; // 降順なので、これ以降はすべて閾値未満
+    if (chosen.some((c) => Math.abs(c.t - s.t) < opts.minGapMs)) continue;
+    chosen.push(s);
+  }
+  return chosen.sort((a, b) => a.t - b.t);
+}
+
 /**
  * 配信セッションを、外部依存のない自己完結 HTML レポートに描画する純粋関数。
  * サンプル（流速）を inline SVG の折れ線（Y軸=件/30秒）で表し、ブラウザで開くだけで波形が見える。
@@ -45,11 +89,12 @@ export function renderHtml(session: SessionWithSamples): string {
   const { id, channel, title, startedAt, endedAt, samples } = session;
 
   const lastT = samples.length ? samples[samples.length - 1].t : 0;
-  const durationMs = Math.max(0, (endedAt ?? startedAt + lastT) - startedAt);
+  const effectiveEnd = endedAt ?? startedAt + lastT;
+  const durationMs = Math.max(0, effectiveEnd - startedAt);
   const peak = samples.reduce((mx, s) => Math.max(mx, s.rate), 0);
-  const startedLabel = new Date(startedAt).toLocaleString("ja-JP");
+  const whenLabel = `${jstDateTime(startedAt)} 〜 ${jstTime(effectiveEnd)} JST`;
 
-  const chart = renderChart(samples, durationMs, peak);
+  const chart = renderChart(samples, durationMs, peak, startedAt);
 
   const stat = (label: string, value: string) =>
     `<div class="stat"><div class="stat-v">${value}</div><div class="stat-l">${label}</div></div>`;
@@ -83,7 +128,7 @@ export function renderHtml(session: SessionWithSamples): string {
   <div class="wrap">
     <h1>${esc(channel)} の盛り上がり振り返り</h1>
     <p class="sub">${esc(title) || "（タイトルなし）"}</p>
-    <p class="when">配信開始 ${startedLabel}</p>
+    <p class="when">配信 ${whenLabel}</p>
 
     <div class="stats">
       ${stat("配信時間", formatDuration(durationMs))}
@@ -104,7 +149,8 @@ export function renderHtml(session: SessionWithSamples): string {
 function renderChart(
   samples: { t: number; rate: number }[],
   durationMs: number,
-  peak: number
+  peak: number,
+  startedAt: number
 ): string {
   if (samples.length === 0) {
     return `<p class="empty">サンプルがありません</p>`;
@@ -149,16 +195,35 @@ function renderChart(
     })
     .join("");
 
-  // ピーク点を直接ラベル
-  const peakSample = samples.reduce((a, b) => (b.rate >= a.rate ? b : a), samples[0]);
-  const px = x(peakSample.t);
-  const py = y(peakSample.rate);
-  const peakLabelAnchor = px > W - 120 ? "end" : "start";
-  const peakLabelDx = peakLabelAnchor === "end" ? -10 : 10;
+  // ピークを直接ラベル。全体最大の1点だけでなく、離れた複数の山（神場面候補）をマークする。
+  // 最大の山はフルラベル「ピーク N (HH:MM)」、2番目以降は控えめに時刻だけを添える。
+  const peaks = findPeaks(samples, {
+    max: 4,
+    minGapMs: Math.max(durationMs * 0.12, 120_000),
+    minRate: Math.max(peak * 0.4, 3),
+  });
+  // 最大の山は選ばれたピークの中から参照で特定する。full samples の t で比較すると、
+  // 頂点が同値のプラトーだと reduce と findPeaks が別サンプルを指してズレる。
+  const topPeak = peaks.reduce((a, b) => (b.rate >= a.rate ? b : a), peaks[0]);
   const peakMark =
     peak > 0
-      ? `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" class="peak-dot" />` +
-        `<text x="${(px + peakLabelDx).toFixed(1)}" y="${(py - 8).toFixed(1)}" class="peak-label" text-anchor="${peakLabelAnchor}">ピーク ${peak}</text>`
+      ? peaks
+          .map((s) => {
+            const px = x(s.t);
+            const py = y(s.rate);
+            const anchor = px > W - 120 ? "end" : "start";
+            const dx = anchor === "end" ? -10 : 10;
+            const time = jstTime(startedAt + s.t);
+            const isTop = s === topPeak;
+            const label = isTop ? `ピーク ${s.rate} (${time})` : time;
+            const cls = isTop ? "peak-label" : "peak-label sub";
+            const r = isTop ? 4.5 : 3.5;
+            return (
+              `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${r}" class="peak-dot" />` +
+              `<text x="${(px + dx).toFixed(1)}" y="${(py - 8).toFixed(1)}" class="${cls}" text-anchor="${anchor}">${label}</text>`
+            );
+          })
+          .join("")
       : "";
 
   const line =
@@ -175,6 +240,7 @@ function renderChart(
     .line { fill: none; stroke: #a970ff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
     .peak-dot { fill: #a970ff; stroke: #1f1f23; stroke-width: 2; }
     .peak-label { fill: #efeff1; font-size: 12px; font-weight: 600; font-family: system-ui, sans-serif; }
+    .peak-label.sub { fill: #adadb8; font-size: 11px; font-weight: 500; }
     .axis-title { fill: #6b6b7a; font-size: 11px; font-family: system-ui, sans-serif; }
   </style>
   <defs>
