@@ -111,7 +111,7 @@ sequenceDiagram
 | 4 | `monitor.join(stream.login, stream.title)` | `StreamSync.sync()` → `ChatMonitor.join()` |
 | 5 | IRC へ JOIN | `ChatMonitor.join()` → `IrcClient.join()` |
 | 6 | `onJoin` でセッション開始 | `ChatMonitor.join()` → `TimelineRecorder.onJoin()` → `repo.startSession()` |
-| 7 | PRIVMSG をパースし `onMessage(channel)` | `IrcClient`（PRIVMSG パース → `onMessage`） |
+| 7 | PRIVMSG をパースし `onMessage(channel)` | `IrcClient`（受信フレームを `\r\n` で行に分割 → 行ごとに PING 応答／PRIVMSG パース → `onMessage`。Twitch は複数行を 1 フレームにまとめて送るため、フレーム単位で数えると流速を過小計上する） |
 | 8 | `addMessage()` で受信時刻を記録 | `IrcClient.onMessage` → `RateDetector.addMessage()` |
 | 9 | 直近30秒の流速 `getRate()` | `ChatMonitor` tick → `RateDetector.getRate()` |
 | 10 | `onSample` で流速を1点記録（逐次 INSERT） | `ChatMonitor` tick → `TimelineRecorder.onSample()` → `repo.addSample()` |
@@ -137,9 +137,12 @@ sequenceDiagram
 
 - **fail-fast の集約** — 設定不正で終了するのは `loadConfig()` の 1 か所だけ。以降の部品は「設定は正しい」前提で書ける。
 - **依存性逆転** — `ChatMonitor` は `Dispatcher` を直接知らず `onAlert` コールバック経由で疎結合。振り返りも同様に、`ChatMonitor` は極小の `SessionObserver`（`onJoin/onSample/onTitleChange/onPart`）だけに依存し、記録先・保存方式・Discord 通知は `TimelineRecorder` 側で完結する。通知系と振り返り系が混ざらない。
-- **記録の例外は隔離する** — 観察者呼び出しは `chatMonitor` の `notifyObserver()` が try/catch で包み、記録側（DB書き込み等）で例外が出ても検知・通知を巻き添えにしない。加えて `index.ts` に `uncaughtException`/`unhandledRejection` の最後の砦を置き、一過性の例外で常駐ボットが落ちないようにする。
-- **タイマーは常に 1 本** — `chatMonitor` の `if (this.timer) return` が二重起動を防ぐ。
+- **記録の例外は隔離する** — 観察者呼び出しは `chatMonitor` の `notifyObserver()` が try/catch で包み、記録側（DB書き込み等）で例外が出ても検知・通知を巻き添えにしない。同じ理由で `IrcClient` も `onMessage` 呼び出しを try/catch で包む（1行の処理失敗で受信フレームごと落とさない）。加えて `index.ts` に `uncaughtException`/`unhandledRejection` の最後の砦を置き、一過性の例外で常駐ボットが落ちないようにする。
+- **タイマーは常に 1 本** — `chatMonitor` の `if (this.timer) return` が検知ループの二重起動を防ぐ。`IrcClient` の再接続タイマーも同様に 1 本だけで、`destroy()` が必ず `clearTimeout` する（残すと破棄後に接続が復活する）。
 - **配信規模に依存しない検知** — 「平均 + ばらつき(σ)」の z スコアで判定し、小規模〜大手まで同じ基準で効く（`RateDetector.isSpike()`）。
 - **逐次永続化でクラッシュ耐性** — 流速は 5 秒ごとに即 SQLite へ INSERT（WAL）。プロセスが落ちても直近数秒しか失われず、起動時 `closeDangling` が未終了セッションを確定する。
 - **URL の秘匿** — レポート id はランダムな 12 桁 hex（連番の列挙による覗き見を防ぐ）。
-- **自己修復** — トークン失効(401)を検知したら `TokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。
+- **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。
+  - 不変条件: **`this.ws` は生きている接続だけを指し、未接続なら `null`**。`close` で必ず `null` に戻す。閉じたソケットを保持すると `join()` が「接続済み」と誤認し、二度と再接続されない（過去にこれで全レポートの流速が 0 になった）。
+  - 監視対象が 0 の間は接続を張り直さず、次の `join()` で張る。「接続なし」は正常な状態のひとつ。
+- **自己修復** — トークン失効(401)を検知したら `TokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。IRC も切断を検知したら 10 秒後に再接続し、ハンドシェイクが固まった場合も `handshakeTimeout` で必ず `close` → 再接続経路に乗る（沈黙したまま止まらない）。
