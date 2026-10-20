@@ -44,7 +44,9 @@ describe("配信→記録→終了→レポート配信の結合", () => {
 
     const repo = new SqliteTimelineRepository(openDb(":memory:"));
     const reports: FinishedSession[] = [];
-    const recorder = new TimelineRecorder(repo, (s) => reports.push(s));
+    const recorder = new TimelineRecorder(repo, (s) => {
+      reports.push(s);
+    });
 
     const monitor = new ChatMonitor(() => {}, cfg, {
       irc: stubIrc,

@@ -1,7 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { openDb } from "../src/db.js";
 import { SqliteTimelineRepository } from "../src/timelineRepository.js";
 import { TimelineRecorder, type FinishedSession } from "../src/timelineRecorder.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("TimelineRecorder", () => {
   let repo: SqliteTimelineRepository;
@@ -13,7 +17,13 @@ describe("TimelineRecorder", () => {
     repo = new SqliteTimelineRepository(openDb(":memory:"));
     reports = [];
     clock = 1000;
-    recorder = new TimelineRecorder(repo, (s) => reports.push(s), () => clock);
+    recorder = new TimelineRecorder(
+      repo,
+      (s) => {
+        reports.push(s);
+      },
+      () => clock
+    );
   });
 
   it("onJoin→onSample×N→onPart で経過msと共にサンプルが貯まる", () => {
@@ -53,6 +63,7 @@ describe("TimelineRecorder", () => {
       startedAt: 1000,
       endedAt: 20000,
       peakRate: 9,
+      endReason: "streamEnded",
     });
     expect(reports[0].id).toMatch(/^[0-9a-f]{12}$/);
   });
@@ -85,5 +96,85 @@ describe("TimelineRecorder", () => {
     recorder.onPart("ghost");
     expect(reports).toHaveLength(0);
     expect(repo.listReports(10)).toHaveLength(0);
+  });
+
+  it("onPart で reportSink が非同期に失敗しても、未処理の reject にせずログする", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const failing = new TimelineRecorder(repo, () => Promise.reject(new Error("network")), () => clock);
+      failing.onJoin("a", "A");
+      failing.onPart("a");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(errSpy).toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+
+  describe("finishAll（プロセス終了時）", () => {
+    it("稼働中の全セッションを endReason=shutdown で確定し、DB に終了時刻を記録する", async () => {
+      recorder.onJoin("a", "A");
+      recorder.onJoin("b", "B");
+      clock = 5000;
+      recorder.onSample("a", 3);
+      clock = 9000;
+
+      await recorder.finishAll();
+
+      expect(reports.map((r) => r.channel).sort()).toEqual(["a", "b"]);
+      expect(reports.every((r) => r.endReason === "shutdown")).toBe(true);
+      for (const r of reports) {
+        expect(repo.getSession(r.id)!.endedAt).toBe(9000);
+      }
+      // 確定済みなので、後から part が来ても二重に通知しない
+      recorder.onPart("a");
+      expect(reports).toHaveLength(2);
+    });
+
+    it("レポート送信（非同期）の完了を待ってから解決する", async () => {
+      const sent: string[] = [];
+      const slow = new TimelineRecorder(
+        repo,
+        (s) => new Promise<void>((resolve) => setTimeout(() => (sent.push(s.channel), resolve()), 10)),
+        () => clock
+      );
+      slow.onJoin("a", "A");
+
+      await slow.finishAll();
+
+      expect(sent).toEqual(["a"]);
+    });
+
+    it("1件の送信が失敗しても、残りのセッションは確定・送信される（失敗はログ）", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const sent: string[] = [];
+      const flaky = new TimelineRecorder(
+        repo,
+        (s) => {
+          if (s.channel === "a") throw new Error("boom");
+          sent.push(s.channel);
+        },
+        () => clock
+      );
+      flaky.onJoin("a", "A");
+      flaky.onJoin("b", "B");
+
+      await expect(flaky.finishAll()).resolves.toBeUndefined();
+
+      expect(sent).toEqual(["b"]);
+      const all = repo.listReports(10);
+      expect(all).toHaveLength(2);
+      expect(all.every((r) => r.endedAt !== null)).toBe(true);
+      expect(errSpy).toHaveBeenCalled();
+    });
+
+    it("稼働中セッションが無ければ何もしない", async () => {
+      await recorder.finishAll();
+      expect(reports).toHaveLength(0);
+    });
   });
 });

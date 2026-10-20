@@ -1,4 +1,4 @@
-import type { FinishedSession } from "./timelineRecorder.js";
+import type { EndReason, FinishedSession } from "./timelineRecorder.js";
 
 export interface AlertPayload {
   channel: string;
@@ -15,6 +15,7 @@ export interface ReportPayload {
   url: string;
   durationMin: number;
   peakRate: number;
+  endReason: EndReason;
 }
 
 /**
@@ -73,16 +74,20 @@ export async function sendDiscordAlert(
 
 export async function sendDiscordReport(
   webhookUrl: string,
-  { channel, title, url, durationMin, peakRate }: ReportPayload
+  { channel, title, url, durationMin, peakRate, endReason }: ReportPayload
 ): Promise<void> {
+  // 配信中に ChatGust が終了した場合は、配信終了と誤解させないよう見出しを分ける。
+  const interrupted = endReason === "shutdown";
   const payload = {
     embeds: [
       {
-        title: `🎬 ${channel} の配信が終了 — 振り返り`,
+        title: interrupted
+          ? `⏸ ${channel} の振り返り（ChatGust 再起動のため途中まで）`
+          : `🎬 ${channel} の配信が終了 — 振り返り`,
         description: `**${escapeMarkdown(title)}**\n[振り返りを見る](${url})`,
         color: 0x9146ff,
         fields: [
-          { name: "配信時間", value: `${durationMin} 分`, inline: true },
+          { name: interrupted ? "記録時間" : "配信時間", value: `${durationMin} 分`, inline: true },
           { name: "ピーク流速", value: `${peakRate} 件/30秒`, inline: true },
         ],
         timestamp: new Date().toISOString(),
@@ -101,6 +106,7 @@ export function buildReportPayload(session: FinishedSession, baseUrl: string): R
     url: `${baseUrl}/reports/${session.id}`,
     durationMin: Math.round((session.endedAt - session.startedAt) / 60000),
     peakRate: session.peakRate,
+    endReason: session.endReason,
   };
 }
 

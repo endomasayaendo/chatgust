@@ -102,6 +102,7 @@ describe("sendDiscordReport", () => {
       url: "https://chatgust.fly.dev/reports/abc123",
       durationMin: 83,
       peakRate: 40,
+      endReason: "streamEnded",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -130,6 +131,7 @@ describe("sendDiscordReport", () => {
         url: "https://x/reports/1",
         durationMin: 10,
         peakRate: 5,
+        endReason: "streamEnded",
       })
     ).resolves.toBeUndefined();
 
@@ -143,11 +145,30 @@ describe("sendDiscordReport", () => {
       url: "https://x/reports/1",
       durationMin: 10,
       peakRate: 5,
+      endReason: "streamEnded",
     });
 
     const desc = lastPayload().embeds[0].description;
     // 生の [text](url) が埋め込まれていない（[ ] がエスケープされている）
     expect(desc).not.toContain("[無料配布](https://phish.example)");
     expect(desc).toContain("\\[無料配布\\]");
+  });
+
+  it("ChatGust 終了による確定は、配信終了と区別した見出しと「記録時間」で送る", async () => {
+    await sendDiscordReport(WEBHOOK, {
+      channel: "shroud",
+      title: "PUBG",
+      url: "https://x/reports/1",
+      durationMin: 42,
+      peakRate: 7,
+      endReason: "shutdown",
+    });
+
+    const embed = lastPayload().embeds[0];
+    expect(embed.title).toContain("shroud");
+    expect(embed.title).toContain("途中まで");
+    expect(embed.title).not.toContain("配信が終了");
+    const durField = embed.fields.find((f: { name: string }) => f.name === "記録時間");
+    expect(durField.value).toContain("42");
   });
 });
