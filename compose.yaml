@@ -1,0 +1,37 @@
+# 開発用。本番（Fly.io）は Dockerfile を直接使い、このファイルは使わない。
+# 操作は Makefile 経由（`make help`）を想定している。
+services:
+  app:
+    build: .
+    # 起動コマンドは本番と同じ Dockerfile の CMD。
+    # 自動再起動はコンテナ内の tsx watch ではなく下の develop.watch（ホスト側で変更を検知）で行う。
+    # コンテナ内のファイル監視は Colima(virtiofs) などで変更通知が届かず、また tsx watch は
+    # 停止時にアプリの終了処理（shutdown）を待たずに子プロセスを止めてしまうため。
+    # PID 1 にシグナルを中継する init を挟み、Ctrl+C / docker compose down で終了処理（shutdown）を走らせる。
+    init: true
+    ports:
+      # ホスト側のポートだけ .env の HOST_PORT で変えられる（コンテナ内は 3000 固定）。
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      # 振り返りリンクはホスト側のポートを指す必要がある。
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:${HOST_PORT:-3000}}"
+      # ローカルではダッシュボードの Basic 認証を外す（.env の DASHBOARD_PASSWORD は本番用）。
+      # 環境変数が先に入っていると dotenv は .env の値で上書きしない。
+      # ローカルでも認証を確かめたいときだけ .env に DEV_DASHBOARD_PASSWORD を書く。
+      DASHBOARD_PASSWORD: "${DEV_DASHBOARD_PASSWORD:-}"
+    volumes:
+      # ソース・.env・data/ は手元と共有する（トークン更新や auth の書き込み、DB が手元に残る）。
+      - .:/app
+      # node_modules はイメージ内のもの（Linux 向けネイティブビルド）を使う。手元の node_modules で上書きしない。
+      - /app/node_modules
+    develop:
+      watch:
+        # ソースはバインドマウント済みなので、変更を検知したらコンテナを再起動するだけでよい。
+        - action: restart
+          path: ./src
+        - action: restart
+          path: ./public
+        # 依存が変わったらイメージを作り直す。
+        - action: rebuild
+          path: package.json
