@@ -3,3 +3,6 @@ dist
 .env
 .git
 test
+data
+data-dev
+tasks

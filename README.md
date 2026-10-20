@@ -108,39 +108,58 @@ flowchart LR
 
 </details>
 
-### 2. インストール
+### 2. 起動（Docker・推奨）
+
+必要なのは **Docker**（Docker Desktop / Colima など）と `make` だけ。Node のインストールや `npm install` は不要。
 
 ```bash
 git clone https://github.com/endomasayaendo/chatgust.git
 cd chatgust
-npm install
-cp .env.example .env
+make setup   # .env を作成し、足りない値と取得場所を表示
 ```
 
-`.env` を開いて以下を記入：
-
-```dotenv
-TWITCH_CLIENT_ID=<Client ID>
-TWITCH_CLIENT_SECRET=<Client Secret>
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-```
-
-### 3. Twitch 認証（初回のみ）
+`.env` の **① 自分で書く** 3項目（`TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` / `DISCORD_WEBHOOK_URL`）を記入し、もう一度 `make setup` で ✅ になることを確認する。
 
 ```bash
-npm run auth
-```
-
-ブラウザが開くので Twitch にログイン。認証が完了するとアクセストークンが `.env` に自動保存される。
-
-### 4. 起動
-
-```bash
-npm start
+make auth    # 表示された URL をブラウザで開き Twitch にログイン（トークンが .env に自動保存される・初回のみ）
+make up      # 起動
 ```
 
 `http://localhost:3000` でダッシュボードを確認できる。
 あとは起動したまま放置すれば、フォロー中の配信のチャットが盛り上がった瞬間に **Discord へ通知が届く**。
+
+| コマンド | 内容 |
+| --- | --- |
+| `make` / `make help` | コマンド一覧 |
+| `make setup` | `.env` を用意し、必須項目が未記入・見本の値のままになっていないか検査 |
+| `make auth` | Twitch 認証（トークンを `.env` に保存） |
+| `make up` | 起動。`src/`・`public/` を保存すると自動で再起動、`package.json` を変えるとイメージを作り直す。`Ctrl+C` で終了 |
+| `make down` | 停止してコンテナを片付ける |
+| `make test` / `make typecheck` | テスト / 型チェック |
+
+> [!TIP]
+> **3000 番ポートが他のアプリに使われている**ときは、`.env` に `HOST_PORT=3001` のように書くとそのポートで開く（振り返りリンクも追従する）。
+
+> [!NOTE]
+> - `.env` と `data/`（振り返りDB）は手元のファイルをそのまま使うので、コンテナを作り直しても消えない。
+> - `make up` ではダッシュボードの Basic 認証（`DASHBOARD_PASSWORD`）は無効。ローカルでも試すときだけ `.env` に `DEV_DASHBOARD_PASSWORD` を書く。
+> - エディタの型チェック（赤線）には手元の `node_modules` が要る。気になる場合は `npm ci` しておく（Node のバージョンは `.nvmrc` の 20）。
+> - Colima はホームディレクトリ配下しかコンテナに共有しない設定が既定。リポジトリはホームディレクトリ配下に置く。
+
+<details>
+<summary><b>Docker を使わずに動かす場合</b></summary>
+
+Node 20 が必要（`.nvmrc`）。
+
+```bash
+npm ci
+cp .env.example .env   # ① の3項目を記入
+npm run auth           # 表示された URL をブラウザで開いて Twitch にログイン
+npm start
+```
+
+ポートを変える場合は `.env` の `PORT` を変える。
+</details>
 
 ---
 
@@ -219,16 +238,22 @@ baseline < 1 の場合（配信開始直後など）:
 
 ### ⚙️ 設定（環境変数）
 
-すべて任意。`.env`（ローカル）または `flyctl secrets set`（本番）で変更できる。
+**必須** と（自動）以外はすべて任意。`.env`（ローカル）または `flyctl secrets set`（本番）で変更できる。
 
 | 変数                 | デフォルト | 説明                                                                                                                 |
 | -------------------- | :--------: | -------------------------------------------------------------------------------------------------------------------- |
+| `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | **必須** | Twitch アプリの ID / シークレット（取得場所は `.env.example` のコメント、または `make setup` の表示を参照） |
+| `DISCORD_WEBHOOK_URL` | **必須** | 通知先の Discord Webhook URL |
+| `TWITCH_ACCESS_TOKEN` / `TWITCH_REFRESH_TOKEN` | （自動） | `make auth` / `npm run auth` が書き込む。手で書かない |
+| `HOST_PORT` | `3000` | `make up` でダッシュボードを開くホスト側のポート |
+| `PORT` | `3000` | `npm start` で直接動かすときのポート（Docker では使わない） |
 | `SPIKE_Z`            |   `3.0`    | 平常の平均から何σ超えたらアラートを出すか（**小さいほど敏感**）                                                      |
 | `SPIKE_THRESHOLD`    |    `8`     | 乗算フォールバックの倍率（ばらつきが極小のチャット向け）                                                             |
 | `MIN_RATE`           |    `5`     | アラートに必要な最低メッセージ数（30秒）                                                                             |
 | `COOLDOWN_MIN`       |    `5`     | 同チャンネルへの連続アラートを防ぐ間隔（分）                                                                         |
 | `NOTIFY_CHANNELS`    | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象） |
-| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名 `admin` / パスワードは設定値）                             |
+| `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名 `admin` / パスワードは設定値）。`make up` では無効 |
+| `DEV_DASHBOARD_PASSWORD` | （未設定） | `make up`（ローカル）でも Basic 認証をかけたいときのパスワード |
 | `DATA_DIR`           |  `./data`  | 振り返りDB(SQLite)の保存先。Fly.io では Volume のパス（`/data`）を指す                                               |
 | `PUBLIC_BASE_URL`    | `http://localhost:PORT` | Discord に送る振り返りリンクの基点。Fly.io では公開URL（`https://<app>.fly.dev`）を設定                 |
 
@@ -243,8 +268,8 @@ flyctl secrets set SPIKE_Z=3.5 NOTIFY_CHANNELS=shroud,k4sen -a <your-app-name>
 ## 🧪 開発
 
 ```bash
-npm test          # Vitest でユニットテスト
-npm run typecheck # tsc --noEmit で型チェック
+make test         # Vitest でユニットテスト（Docker を使わない場合: npm test）
+make typecheck    # tsc --noEmit で型チェック（Docker を使わない場合: npm run typecheck）
 ```
 
 `main` への push / PR で CI（テスト＋型チェック）が自動実行される。
@@ -297,8 +322,14 @@ chatgust/
 ├── .github/workflows/
 │   ├── ci.yml          # テスト + 型チェック
 │   └── cd.yml          # CI 成功後に Fly.io へ自動デプロイ
+├── scripts/
+│   ├── checkEnv.ts     # make setup で .env の必須項目を検査
+│   └── devReport.ts    # 振り返りレポートの動作確認用ハーネス
 ├── fly.toml            # Fly.io 設定
-├── Dockerfile
+├── Dockerfile          # 本番・開発共通のイメージ
+├── compose.yaml        # 開発用（make up）。ソース変更で自動再起動
+├── Makefile            # 開発用コマンドの入口（make help）
+├── .nvmrc              # Node のバージョン（20）
 └── .env.example
 ```
 
