@@ -132,6 +132,7 @@ sequenceDiagram
 - 配信中の改名（同期で同じチャンネルを再 join したとき）… `ChatMonitor.join()`（既存分岐・title 変化時のみ `onTitleChange`）→ `TimelineRecorder.onTitleChange()` → `repo.updateTitle()`
 - `/reports/:id` … DB から波形HTMLを描画して配信（Discordリンク／ブラウザの着地点） … `server.ts` の `GET /reports/:id` → `repo.getSession()` → `renderHtml()`
 - `/api/reports`（一覧）/ `/api/reports/:id`（JSON） … `server.ts` の `GET /api/reports` / `GET /api/reports/:id`
+- プロセス終了（SIGINT / SIGTERM）… `index.ts` の `shutdown()` → `ChatMonitor.destroy()` → `TimelineRecorder.finishAll()`（稼働中セッションを `endReason: "shutdown"` で確定）→ `db.close()` → レポート送信を最大 4 秒待って終了
 
 ## 設計メモ
 
@@ -140,6 +141,7 @@ sequenceDiagram
 - **記録の例外は隔離する** — 観察者呼び出しは `chatMonitor` の `notifyObserver()` が try/catch で包み、記録側（DB書き込み等）で例外が出ても検知・通知を巻き添えにしない。同じ理由で `IrcClient` も `onMessage` 呼び出しを try/catch で包む（1行の処理失敗で受信フレームごと落とさない）。加えて `index.ts` に `uncaughtException`/`unhandledRejection` の最後の砦を置き、一過性の例外で常駐ボットが落ちないようにする。
 - **タイマーは常に 1 本** — `chatMonitor` の `if (this.timer) return` が検知ループの二重起動を防ぐ。`IrcClient` の再接続タイマーも同様に 1 本だけで、`destroy()` が必ず `clearTimeout` する（残すと破棄後に接続が復活する）。
 - **配信規模に依存しない検知** — 「平均 + ばらつき(σ)」の z スコアで判定し、小規模〜大手まで同じ基準で効く（`RateDetector.isSpike()`）。
+- **終了時に配信中のセッションを確定して送る** — SIGINT（Fly.io の既定）と SIGTERM（`docker stop` 等）を同じ `shutdown()` に通す。`monitor.destroy()` は監視を止めるだけで `onPart` を呼ばないため、`TimelineRecorder.finishAll()` で稼働中セッションを明示的に確定し、レポートを送る。配信が終わったわけではないので、通知は「再起動のため途中まで」と配信終了とは区別する。Fly の `kill_timeout`（既定 5 秒）より先に終わるよう、送信の待ちは 4 秒で打ち切る。再起動をまたいだ同一配信のセッション再開は #20。
 - **逐次永続化でクラッシュ耐性** — 流速は 5 秒ごとに即 SQLite へ INSERT（WAL）。プロセスが落ちても直近数秒しか失われず、起動時 `closeDangling` が未終了セッションを確定する。
 - **URL の秘匿** — レポート id はランダムな 12 桁 hex（連番の列挙による覗き見を防ぐ）。
 - **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。

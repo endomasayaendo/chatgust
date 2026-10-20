@@ -59,6 +59,7 @@ const CHECK_INTERVAL_MS = 5_000;
 export class ChatMonitor {
   private readonly channels = new Map<string, ChannelState>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private destroyed = false;
   private readonly irc: IrcClient;
   private readonly policy: SpikePolicy;
   private readonly detectorFactory: () => SpikeDetector;
@@ -105,6 +106,8 @@ export class ChatMonitor {
   }
 
   join(channel: string, title: string): void {
+    // 破棄後の join（終了処理中に完了した同期など）で、IRC 接続や検知ループを復活させない。
+    if (this.destroyed) return;
     const existing = this.channels.get(channel);
     if (existing) {
       if (existing.title !== title) {
@@ -138,6 +141,7 @@ export class ChatMonitor {
   }
 
   destroy(): void {
+    this.destroyed = true;
     if (this.timer) clearInterval(this.timer);
     this.channels.clear();
     this.irc.destroy();

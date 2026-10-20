@@ -1,7 +1,14 @@
 import type { SessionObserver } from "./chatMonitor.js";
 import type { TimelineRepository } from "./timelineRepository.js";
 
-/** 配信終了時に reportSink へ渡す、確定したセッションの情報。 */
+/**
+ * セッションが確定した理由。
+ * - streamEnded: 配信が終わった（part）
+ * - shutdown: 配信中に ChatGust 自体が終了した（記録は終了時点まで）
+ */
+export type EndReason = "streamEnded" | "shutdown";
+
+/** セッション確定時に reportSink へ渡す、確定したセッションの情報。 */
 export interface FinishedSession {
   id: string;
   channel: string;
@@ -9,7 +16,11 @@ export interface FinishedSession {
   startedAt: number;
   endedAt: number;
   peakRate: number;
+  endReason: EndReason;
 }
+
+/** 確定したセッションの受け取り先。送信完了を待てるよう Promise を返してもよい。 */
+export type ReportSink = (session: FinishedSession) => void | Promise<void>;
 
 interface ActiveSession {
   id: string;
@@ -28,7 +39,7 @@ export class TimelineRecorder implements SessionObserver {
 
   constructor(
     private readonly repo: TimelineRepository,
-    private readonly reportSink: (session: FinishedSession) => void,
+    private readonly reportSink: ReportSink,
     private readonly now: () => number = () => Date.now()
   ) {}
 
@@ -56,20 +67,45 @@ export class TimelineRecorder implements SessionObserver {
   }
 
   onPart(channel: string): void {
-    const session = this.active.get(channel);
-    if (!session) return;
-    this.active.delete(channel);
+    void this.finish(channel, "streamEnded");
+  }
 
-    // 時計の巻き戻りで終了 < 開始 にならないよう下限を取る（配信時間が負になるのを防ぐ）。
-    const endedAt = Math.max(this.now(), session.startedAt);
-    this.repo.endSession(session.id, endedAt);
-    this.reportSink({
-      id: session.id,
-      channel,
-      title: session.title,
-      startedAt: session.startedAt,
-      endedAt,
-      peakRate: session.peakRate,
+  /**
+   * 稼働中の全セッションを確定する（プロセス終了時用）。
+   * DB への確定は同期で済ませ、戻り値の Promise はレポート送信がすべて終わる（成否は問わない）と解決する。
+   * 1件の確定・送信が失敗しても、残りのセッションは確定する。
+   */
+  finishAll(): Promise<void> {
+    const finishing = [...this.active.keys()].map((channel) => this.finish(channel, "shutdown"));
+    return Promise.all(finishing).then(() => undefined);
+  }
+
+  /**
+   * セッションを確定し reportSink を呼ぶ。確定と sink の呼び出しは同期で行い、
+   * 戻り値は sink の完了で解決する。失敗（同期の throw も非同期の reject も）はここでログし、reject しない。
+   */
+  private finish(channel: string, endReason: EndReason): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const session = this.active.get(channel);
+      if (!session) return resolve();
+      this.active.delete(channel);
+
+      // 時計の巻き戻りで終了 < 開始 にならないよう下限を取る（配信時間が負になるのを防ぐ）。
+      const endedAt = Math.max(this.now(), session.startedAt);
+      this.repo.endSession(session.id, endedAt);
+      resolve(
+        this.reportSink({
+          id: session.id,
+          channel,
+          title: session.title,
+          startedAt: session.startedAt,
+          endedAt,
+          peakRate: session.peakRate,
+          endReason,
+        })
+      );
+    }).catch((err: Error) => {
+      console.error(`[timeline] finish #${channel} failed:`, err.message);
     });
   }
 }
