@@ -10,4 +10,6 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 EXPOSE 3000
-CMD ["npx", "tsx", "src/index.ts"]
+# node を直接起動し tsx はローダーとして読み込む（npx → sh → tsx → node と段を重ねると、
+# 途中の sh が SIGINT/SIGTERM をアプリに中継せず、終了処理が走らないまま落ちる）。
+CMD ["node", "--import", "tsx", "src/index.ts"]
