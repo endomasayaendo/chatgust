@@ -50,6 +50,20 @@ function positiveNumber(raw: string, name: string): number {
   return value;
 }
 
+/** 検知パラメータ（Config の一部）。バックテストも現行値の基準としてこれを使う。 */
+export type DetectorSettings = Pick<Config, "spikeThreshold" | "spikeZ" | "minRate" | "cooldownMin">;
+
+/** 環境変数から検知パラメータを読む（未設定なら既定値）。不正な数値は Error を投げる。 */
+export function loadDetectorSettings(env: NodeJS.ProcessEnv = process.env): DetectorSettings {
+  const { SPIKE_THRESHOLD = "8", SPIKE_Z = "3.0", MIN_RATE = "5", COOLDOWN_MIN = "5" } = env;
+  return {
+    spikeThreshold: positiveNumber(SPIKE_THRESHOLD, "SPIKE_THRESHOLD"),
+    spikeZ: positiveNumber(SPIKE_Z, "SPIKE_Z"),
+    minRate: positiveNumber(MIN_RATE, "MIN_RATE"),
+    cooldownMin: positiveNumber(COOLDOWN_MIN, "COOLDOWN_MIN"),
+  };
+}
+
 /**
  * 環境変数から Config を構築する。必須項目の欠落や不正な数値は Error を投げる。
  * プロセス終了などの副作用は持たず、終了するかどうかの判断は呼び出し側に委ねる。
@@ -64,10 +78,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     TWITCH_ACCESS_TOKEN,
     TWITCH_REFRESH_TOKEN,
     PORT = "3000",
-    SPIKE_THRESHOLD = "8",
-    SPIKE_Z = "3.0",
-    MIN_RATE = "5",
-    COOLDOWN_MIN = "5",
     DATA_DIR = "./data",
     PUBLIC_BASE_URL,
   } = env;
@@ -99,10 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dashboardPassword: DASHBOARD_PASSWORD,
     notifyChannels,
     port,
-    spikeThreshold: positiveNumber(SPIKE_THRESHOLD, "SPIKE_THRESHOLD"),
-    spikeZ: positiveNumber(SPIKE_Z, "SPIKE_Z"),
-    minRate: positiveNumber(MIN_RATE, "MIN_RATE"),
-    cooldownMin: positiveNumber(COOLDOWN_MIN, "COOLDOWN_MIN"),
+    ...loadDetectorSettings(env),
     authMode,
     accessToken,
     refreshToken: TWITCH_REFRESH_TOKEN ?? "",
