@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StreamSync, type TwitchApi } from "../src/streamSync.js";
 import { TwitchAuthError, type Stream } from "../src/twitchApi.js";
 import type { ChatMonitor } from "../src/chatMonitor.js";
-import type { TokenStore } from "../src/tokenStore.js";
+import type { AccessTokenSource } from "../src/tokenStore.js";
 
 function fakeMonitor(current: string[] = []) {
   const joined: { channel: string; title: string }[] = [];
@@ -17,7 +17,7 @@ function fakeMonitor(current: string[] = []) {
 
 function fakeTokenStore() {
   const refresh = vi.fn().mockResolvedValue(undefined);
-  const store = { accessToken: "tok", refresh } as unknown as TokenStore;
+  const store: AccessTokenSource = { accessToken: "tok", refresh };
   return { store, refresh };
 }
 
@@ -46,7 +46,7 @@ describe("StreamSync", () => {
     const { monitor, joined } = fakeMonitor();
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), "user", api);
     await sync.sync();
 
     // 許可リストで foo のみが getLiveStreams に渡る
@@ -63,7 +63,7 @@ describe("StreamSync", () => {
     const { monitor, parted } = fakeMonitor(["foo", "gone"]); // gone は監視中だが配信終了
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync();
 
     expect(parted).toEqual(["gone"]);
@@ -78,7 +78,7 @@ describe("StreamSync", () => {
     const { monitor } = fakeMonitor();
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync();
     await sync.sync();
 
@@ -98,11 +98,49 @@ describe("StreamSync", () => {
     const { monitor } = fakeMonitor();
     const { store, refresh } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync(); // 失効 → refresh
     expect(refresh).toHaveBeenCalledTimes(1);
 
     await sync.sync(); // userId リセット済みなので再度 getCurrentUser
     expect(getCurrentUser).toHaveBeenCalledTimes(2);
+  });
+
+  describe("app モード（ユーザートークン無し）", () => {
+    function appApi(liveLogins: string[]): TwitchApi {
+      return {
+        getCurrentUser: vi.fn(),
+        getFollowedChannels: vi.fn(),
+        getLiveStreams: vi.fn(async (_c, _t, logins: string[]) =>
+          logins.filter((l) => liveLogins.includes(l)).map((l) => stream(l))
+        ),
+      };
+    }
+
+    it("フォロー一覧を取らず、許可リストのライブ配信を join する", async () => {
+      const api = appApi(["foo"]);
+      const { monitor, joined } = fakeMonitor();
+      const { store } = fakeTokenStore();
+
+      const sync = new StreamSync("cid", store, monitor, new Set(["foo", "bar"]), "app", api);
+      await sync.sync();
+
+      expect(api.getCurrentUser).not.toHaveBeenCalled();
+      expect(api.getFollowedChannels).not.toHaveBeenCalled();
+      expect(api.getLiveStreams).toHaveBeenCalledWith("cid", "tok", ["foo", "bar"]);
+      expect(joined).toEqual([{ channel: "foo", title: "T" }]);
+    });
+
+    it("401 でトークンを取り直す", async () => {
+      const api = appApi([]);
+      (api.getLiveStreams as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new TwitchAuthError());
+      const { monitor } = fakeMonitor();
+      const { store, refresh } = fakeTokenStore();
+
+      const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), "app", api);
+      await sync.sync();
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
   });
 });

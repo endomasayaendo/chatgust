@@ -125,6 +125,9 @@ make auth    # 表示された URL をブラウザで開き Twitch にログイ�
 make up      # 起動
 ```
 
+> [!TIP]
+> **監視するチャンネルが決まっているなら `make auth` は不要。** `.env` の `NOTIFY_CHANNELS` にチャンネルを書けば、Client ID / Secret だけで起動できる（Twitch へのログインなし）。フォロー中の全配信を自動で監視したいときだけ `make auth` する。
+
 `http://localhost:3000` でダッシュボードを確認できる。
 あとは起動したまま放置すれば、フォロー中の配信のチャットが盛り上がった瞬間に **Discord へ通知が届く**。
 
@@ -132,7 +135,7 @@ make up      # 起動
 | --- | --- |
 | `make` / `make help` | コマンド一覧 |
 | `make setup` | `.env` を用意し、必須項目が未記入・見本の値のままになっていないか検査 |
-| `make auth` | Twitch 認証（トークンを `.env` に保存） |
+| `make auth` | Twitch 認証（トークンを `.env` に保存）。`NOTIFY_CHANNELS` を指定するなら不要 |
 | `make up` | 起動。`src/`・`public/` を保存すると自動で再起動、`package.json` を変えるとイメージを作り直す。`Ctrl+C` で終了 |
 | `make down` | 停止してコンテナを片付ける |
 | `make test` / `make typecheck` | テスト / 型チェック |
@@ -154,7 +157,7 @@ Node 20 が必要（`.nvmrc`）。
 ```bash
 npm ci
 cp .env.example .env   # ① の3項目を記入
-npm run auth           # 表示された URL をブラウザで開いて Twitch にログイン
+npm run auth           # 表示された URL をブラウザで開いて Twitch にログイン（NOTIFY_CHANNELS を指定するなら不要）
 npm start
 ```
 
@@ -244,14 +247,14 @@ baseline < 1 の場合（配信開始直後など）:
 | -------------------- | :--------: | -------------------------------------------------------------------------------------------------------------------- |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | **必須** | Twitch アプリの ID / シークレット（取得場所は `.env.example` のコメント、または `make setup` の表示を参照） |
 | `DISCORD_WEBHOOK_URL` | **必須** | 通知先の Discord Webhook URL |
-| `TWITCH_ACCESS_TOKEN` / `TWITCH_REFRESH_TOKEN` | （自動） | `make auth` / `npm run auth` が書き込む。手で書かない |
+| `TWITCH_ACCESS_TOKEN` / `TWITCH_REFRESH_TOKEN` | （自動） | `make auth` / `npm run auth` が書き込む。手で書かない。`NOTIFY_CHANNELS` を指定するなら無くてよい（アプリアクセストークンで動く） |
 | `HOST_PORT` | `3000` | `make up` でダッシュボードを開くホスト側のポート |
 | `PORT` | `3000` | `npm start` で直接動かすときのポート（Docker では使わない） |
 | `SPIKE_Z`            |   `3.0`    | 平常の平均から何σ超えたらアラートを出すか（**小さいほど敏感**）                                                      |
 | `SPIKE_THRESHOLD`    |    `8`     | 乗算フォールバックの倍率（ばらつきが極小のチャット向け）                                                             |
 | `MIN_RATE`           |    `5`     | アラートに必要な最低メッセージ数（30秒）                                                                             |
 | `COOLDOWN_MIN`       |    `5`     | 同チャンネルへの連続アラートを防ぐ間隔（分）                                                                         |
-| `NOTIFY_CHANNELS`    | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象） |
+| `NOTIFY_CHANNELS`    | （未設定） | カンマ区切りのチャンネル login。設定するとそのチャンネルだけを監視・通知（未設定ならフォロー中の全ライブ配信が対象）。`make auth` していなければ、このチャンネルをそのまま監視する |
 | `DASHBOARD_PASSWORD` | （未設定） | 設定するとダッシュボードに Basic 認証がかかる（ユーザー名 `admin` / パスワードは設定値）。`make up` では無効 |
 | `DEV_DASHBOARD_PASSWORD` | （未設定） | `make up`（ローカル）でも Basic 認証をかけたいときのパスワード |
 | `DATA_DIR`           |  `./data`  | 振り返りDB(SQLite)の保存先。Fly.io では Volume のパス（`/data`）を指す                                               |
@@ -314,9 +317,9 @@ chatgust/
 │   ├── index.ts          # composition root（依存の生成・配線・起動のみ）
 │   ├── config.ts         # 環境変数のパース・バリデーション（型付き Config）
 │   ├── auth.ts           # 初回 Twitch 認証スクリプト（ローカルのみ実行）
-│   ├── tokenStore.ts     # トークンの保持・リフレッシュ・.env への永続化
+│   ├── tokenStore.ts     # トークンの保持・リフレッシュ・.env への永続化（+ ログイン不要のアプリトークン）
 │   ├── twitchApi.ts      # Twitch REST API（フォロー一覧・ライブ配信取得・トークンリフレッシュ）
-│   ├── streamSync.ts     # フォロー→絞り込み→ライブ取得→監視へ反映（定期同期）
+│   ├── streamSync.ts     # フォロー→絞り込み→ライブ取得→監視へ反映（定期同期。未ログイン時は NOTIFY_CHANNELS を直接監視）
 │   ├── chatMonitor.ts    # 検知コーディネーター（detector・policy・irc・SessionObserver を束ねる）
 │   ├── ircClient.ts      # IRC WebSocket 転送（1接続で全チャンネルを JOIN）
 │   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ）+ スパイク判定 judgeSpike（zスコア）

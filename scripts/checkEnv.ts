@@ -1,6 +1,8 @@
 import { readFileSync, existsSync } from "fs";
 import { pathToFileURL } from "url";
 import { parse } from "dotenv";
+import { resolveAuthMode } from "../src/config.js";
+import { parseAllowlist } from "../src/notifyFilter.js";
 
 /**
  * `make setup` から呼ぶ .env の検査。必須項目が「未記入／.env.example の見本値のまま／OK」かを判定し、
@@ -33,9 +35,6 @@ const REQUIRED: { key: string; hint: string }[] = [
   },
 ];
 
-/** `make auth` が書き込む項目。 */
-const TOKENS = ["TWITCH_ACCESS_TOKEN", "TWITCH_REFRESH_TOKEN"];
-
 function statusOf(value: string | undefined, placeholder: string | undefined): EnvStatus {
   if (!value) return "missing";
   if (placeholder && value === placeholder) return "placeholder";
@@ -47,9 +46,9 @@ export function checkRequired(env: Record<string, string>, example: Record<strin
   return REQUIRED.map(({ key, hint }) => ({ key, status: statusOf(env[key], example[key]), hint }));
 }
 
-/** `make auth` 済みか（トークンが両方入っているか）。 */
-export function hasTokens(env: Record<string, string>): boolean {
-  return TOKENS.every((key) => Boolean(env[key]));
+/** アプリ本体（loadConfig）と同じ判定で、起動時の認証方式を返す。undefined なら `make auth` が必要。 */
+export function authModeOf(env: Record<string, string>) {
+  return resolveAuthMode(env.TWITCH_ACCESS_TOKEN, parseAllowlist(env.NOTIFY_CHANNELS));
 }
 
 function main(): void {
@@ -72,13 +71,18 @@ function main(): void {
   }
 
   const ready = checks.every((c) => c.status === "ok");
+  const authMode = authModeOf(env);
   console.log("\n次にやること:");
   if (!ready) {
     console.log("  .env の ❌ の項目を書いてから、もう一度 `make setup`");
-  } else if (!hasTokens(env)) {
-    console.log("  `make auth` で Twitch にログイン（トークンが .env に自動で書き込まれます）");
-  } else {
+  } else if (authMode === "user") {
     console.log("  準備完了。`make up` で起動");
+  } else if (authMode === "app") {
+    console.log("  準備完了。`make up` で起動（NOTIFY_CHANNELS のチャンネルだけを監視します）");
+    console.log("  フォロー中の全配信を監視したいときは `make auth` で Twitch にログイン");
+  } else {
+    console.log("  `make auth` で Twitch にログイン（トークンが .env に自動で書き込まれます）");
+    console.log("  またはログインせずに、.env の NOTIFY_CHANNELS に監視するチャンネルを書く");
   }
   console.log("");
 }

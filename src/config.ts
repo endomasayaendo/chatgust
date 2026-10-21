@@ -1,6 +1,25 @@
 import { parseAllowlist } from "./notifyFilter.js";
 
 /**
+ * Twitch API の認証方式。
+ * - user: `npm run auth` で得たユーザーアクセストークン。フォロー一覧を監視対象にできる
+ * - app: Client ID / Secret から取るアプリアクセストークン。フォロー一覧は取れないので NOTIFY_CHANNELS を監視する
+ */
+export type AuthMode = "user" | "app";
+
+/**
+ * 認証方式を決める。ユーザートークンがあれば user、無くても監視対象を直接指定していれば app。
+ * どちらも無ければ undefined（`npm run auth` が必要）。`make setup` の案内もこの判定を使う。
+ */
+export function resolveAuthMode(
+  accessToken: string | undefined,
+  notifyChannels: Set<string>
+): AuthMode | undefined {
+  if (accessToken) return "user";
+  return notifyChannels.size > 0 ? "app" : undefined;
+}
+
+/**
  * アプリ全体で参照する、型付きの実行時設定。
  * 認証情報・通知設定・検知パラメータなど、環境変数由来の値をまとめて保持する。
  */
@@ -15,6 +34,7 @@ export interface Config {
   spikeZ: number;
   minRate: number;
   cooldownMin: number;
+  authMode: AuthMode;
   accessToken: string;
   refreshToken: string;
   dataDir: string;
@@ -64,11 +84,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const accessToken = TWITCH_ACCESS_TOKEN ?? "";
   const port = positiveNumber(PORT, "PORT");
+  const notifyChannels = parseAllowlist(NOTIFY_CHANNELS);
 
-  if (!TWITCH_CLIENT_ID || !accessToken || !DISCORD_WEBHOOK_URL) {
+  if (!TWITCH_CLIENT_ID || !DISCORD_WEBHOOK_URL) {
     throw new Error(
       "Missing required env vars. Copy .env.example to .env and fill in the values."
     );
+  }
+
+  const authMode = resolveAuthMode(accessToken, notifyChannels);
+  if (!authMode) {
+    throw new Error(
+      "Missing Twitch login. Run `make auth` (or `npm run auth`), or set NOTIFY_CHANNELS to monitor specific channels without login."
+    );
+  }
+  if (authMode === "app" && !TWITCH_CLIENT_SECRET) {
+    throw new Error("TWITCH_CLIENT_SECRET is required to run without login (NOTIFY_CHANNELS mode).");
   }
 
   return {
@@ -76,9 +107,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     twitchClientSecret: TWITCH_CLIENT_SECRET ?? "",
     discordWebhookUrl: DISCORD_WEBHOOK_URL,
     dashboardPassword: DASHBOARD_PASSWORD,
-    notifyChannels: parseAllowlist(NOTIFY_CHANNELS),
+    notifyChannels,
     port,
     ...loadDetectorSettings(env),
+    authMode,
     accessToken,
     refreshToken: TWITCH_REFRESH_TOKEN ?? "",
     // 空文字（.env に `DATA_DIR=` のように空で置かれる）も未設定扱いにするため || を使う。

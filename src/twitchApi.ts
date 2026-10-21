@@ -113,3 +113,22 @@ export async function refreshAccessToken(
   const data = await res.json() as { access_token: string; refresh_token: string };
   return { accessToken: data.access_token, refreshToken: data.refresh_token };
 }
+
+/**
+ * client credentials フローでアプリアクセストークンを取得する。
+ * ユーザーに紐づかないため、フォロー一覧（user:read:follows）は取れないが Get Streams には使える。
+ */
+export async function getAppAccessToken(clientId: string, clientSecret: string): Promise<string> {
+  const res = await fetch("https://id.twitch.tv/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "client_credentials",
+    }),
+  });
+  if (!res.ok) throw new Error(`App token request failed: ${await res.text()}`);
+  const data = await res.json() as { access_token: string };
+  return data.access_token;
+}
