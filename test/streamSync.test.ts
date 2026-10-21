@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StreamSync, type TwitchApi } from "../src/streamSync.js";
 import { TwitchAuthError, type Stream } from "../src/twitchApi.js";
 import type { ChatMonitor } from "../src/chatMonitor.js";
-import type { TokenStore } from "../src/tokenStore.js";
+import type { AccessTokenSource } from "../src/tokenStore.js";
 import type { StreamRef } from "../src/vod.js";
 
 function fakeMonitor(current: string[] = []) {
@@ -20,7 +20,7 @@ function fakeMonitor(current: string[] = []) {
 
 function fakeTokenStore() {
   const refresh = vi.fn().mockResolvedValue(undefined);
-  const store = { accessToken: "tok", refresh } as unknown as TokenStore;
+  const store: AccessTokenSource = { accessToken: "tok", refresh };
   return { store, refresh };
 }
 
@@ -50,7 +50,7 @@ describe("StreamSync", () => {
     const { monitor, joined } = fakeMonitor();
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), "user", api);
     await sync.sync();
 
     // 許可リストで foo のみが getLiveStreams に渡る
@@ -70,7 +70,7 @@ describe("StreamSync", () => {
     const { monitor, parted } = fakeMonitor(["foo", "gone"]); // gone は監視中だが配信終了
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync();
 
     expect(parted).toEqual(["gone"]);
@@ -86,7 +86,7 @@ describe("StreamSync", () => {
     const { monitor } = fakeMonitor();
     const { store } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync();
     await sync.sync();
 
@@ -107,7 +107,7 @@ describe("StreamSync", () => {
     const { monitor } = fakeMonitor();
     const { store, refresh } = fakeTokenStore();
 
-    const sync = new StreamSync("cid", store, monitor, new Set(), api);
+    const sync = new StreamSync("cid", store, monitor, new Set(), "user", api);
     await sync.sync(); // 失効 → refresh
     expect(refresh).toHaveBeenCalledTimes(1);
 
@@ -128,7 +128,7 @@ describe("StreamSync", () => {
     it("見つかった VOD を join に添え、以降の同期では引き直さない", async () => {
       const getVod = vi.fn().mockResolvedValue("v1");
       const { monitor, joined } = fakeMonitor();
-      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), "user", apiWithVod(getVod));
 
       await sync.sync();
       await sync.sync();
@@ -143,7 +143,7 @@ describe("StreamSync", () => {
       let answer: (vodId: string | null) => void = () => {};
       const getVod = vi.fn(() => new Promise<string | null>((resolve) => (answer = resolve)));
       const { monitor, joined } = fakeMonitor();
-      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), "user", apiWithVod(getVod));
 
       const pending = sync.sync();
       await vi.waitFor(() => expect(getVod).toHaveBeenCalled());
@@ -157,7 +157,7 @@ describe("StreamSync", () => {
     it("見つからなければ vodId=null で join し、次の同期で引き直す", async () => {
       const getVod = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("v1");
       const { monitor, joined } = fakeMonitor();
-      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), "user", apiWithVod(getVod));
 
       await sync.sync();
       await sync.sync();
@@ -168,13 +168,56 @@ describe("StreamSync", () => {
     it("VOD の取得に失敗しても join は行う（VOD なし）", async () => {
       const getVod = vi.fn().mockRejectedValue(new Error("Twitch API 500"));
       const { monitor, joined } = fakeMonitor();
-      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), "user", apiWithVod(getVod));
 
       await sync.sync();
 
       expect(joined).toEqual([
         { channel: "foo", title: "T", stream: { streamId: "s-foo", startedAt: 1000, vodId: null } },
       ]);
+    });
+  });
+
+  describe("app モード（ユーザートークン無し）", () => {
+    function appApi(liveLogins: string[]): TwitchApi {
+      return {
+        getCurrentUser: vi.fn(),
+        getFollowedChannels: vi.fn(),
+        getLiveStreams: vi.fn(async (_c, _t, logins: string[]) =>
+          logins.filter((l) => liveLogins.includes(l)).map((l) => stream(l))
+        ),
+        getArchiveVideoId: vi.fn().mockResolvedValue("v1"),
+      };
+    }
+
+    it("フォロー一覧を取らず、許可リストのライブ配信を VOD とともに join する", async () => {
+      const api = appApi(["foo"]);
+      const { monitor, joined } = fakeMonitor();
+      const { store } = fakeTokenStore();
+
+      const sync = new StreamSync("cid", store, monitor, new Set(["foo", "bar"]), "app", api);
+      await sync.sync();
+
+      expect(api.getCurrentUser).not.toHaveBeenCalled();
+      expect(api.getFollowedChannels).not.toHaveBeenCalled();
+      expect(api.getLiveStreams).toHaveBeenCalledWith("cid", "tok", ["foo", "bar"]);
+      expect(api.getArchiveVideoId).toHaveBeenCalledWith("cid", "tok", "id-foo", "s-foo");
+      expect(joined.map((j) => [j.channel, j.stream?.vodId])).toEqual([
+        ["foo", null],
+        ["foo", "v1"],
+      ]);
+    });
+
+    it("401 でトークンを取り直す", async () => {
+      const api = appApi([]);
+      (api.getLiveStreams as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new TwitchAuthError());
+      const { monitor } = fakeMonitor();
+      const { store, refresh } = fakeTokenStore();
+
+      const sync = new StreamSync("cid", store, monitor, new Set(["foo"]), "app", api);
+      await sync.sync();
+
+      expect(refresh).toHaveBeenCalledTimes(1);
     });
   });
 });

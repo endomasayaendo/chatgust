@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { checkRequired, hasTokens } from "../scripts/checkEnv.js";
+import { authModeOf, checkOptional, checkRequired } from "../scripts/checkEnv.js";
 
 const example = {
   TWITCH_CLIENT_ID: "your_client_id_here",
   TWITCH_CLIENT_SECRET: "your_client_secret_here",
-  DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/xxx/yyy",
+  DISCORD_WEBHOOK_URL: "",
 };
 
 function statuses(env: Record<string, string>) {
@@ -16,13 +16,15 @@ describe("checkRequired", () => {
     expect(
       statuses({
         TWITCH_CLIENT_ID: "",
-        TWITCH_CLIENT_SECRET: "real-secret",
-        DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/xxx/yyy",
+        TWITCH_CLIENT_SECRET: "your_client_secret_here",
       })
     ).toEqual({
       TWITCH_CLIENT_ID: "missing",
+      TWITCH_CLIENT_SECRET: "placeholder",
+    });
+    expect(statuses({ TWITCH_CLIENT_ID: "real-id", TWITCH_CLIENT_SECRET: "real-secret" })).toEqual({
+      TWITCH_CLIENT_ID: "ok",
       TWITCH_CLIENT_SECRET: "ok",
-      DISCORD_WEBHOOK_URL: "placeholder",
     });
   });
 
@@ -30,7 +32,6 @@ describe("checkRequired", () => {
     expect(statuses({})).toEqual({
       TWITCH_CLIENT_ID: "missing",
       TWITCH_CLIENT_SECRET: "missing",
-      DISCORD_WEBHOOK_URL: "missing",
     });
   });
 
@@ -39,10 +40,37 @@ describe("checkRequired", () => {
   });
 });
 
-describe("hasTokens", () => {
-  it("アクセストークンとリフレッシュトークンが両方あるときだけ true", () => {
-    expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "r" })).toBe(true);
-    expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "" })).toBe(false);
-    expect(hasTokens({})).toBe(false);
+describe("checkOptional", () => {
+  function optionalStatus(value: string | undefined) {
+    const env: Record<string, string> = value === undefined ? {} : { DISCORD_WEBHOOK_URL: value };
+    return checkOptional(env, example).find((c) => c.key === "DISCORD_WEBHOOK_URL")?.status;
+  }
+
+  it("DISCORD_WEBHOOK_URL は未記入でもよく、記入済みなら ok", () => {
+    expect(optionalStatus(undefined)).toBe("missing");
+    expect(optionalStatus("")).toBe("missing");
+    expect(optionalStatus("https://discord.com/api/webhooks/123/real")).toBe("ok");
+  });
+
+  it("以前の .env.example の見本値のままなら placeholder として拾う", () => {
+    expect(optionalStatus("https://discord.com/api/webhooks/xxx/yyy")).toBe("placeholder");
+  });
+
+  it("未記入時の代替動作の案内が付く", () => {
+    expect(checkOptional({}, example).every((c) => c.unsetNote.length > 0)).toBe(true);
+  });
+});
+
+describe("authModeOf", () => {
+  it("アプリ本体と同じく、アクセストークンの有無で user モードを判定する", () => {
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "r" })).toBe("user");
+    // リフレッシュトークンが空でもアプリは user モードで起動するので、app と案内しない
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "", NOTIFY_CHANNELS: "foo" })).toBe("user");
+  });
+
+  it("トークンが無ければ NOTIFY_CHANNELS の有無で app / 要ログインを分ける", () => {
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "", NOTIFY_CHANNELS: "foo,bar" })).toBe("app");
+    expect(authModeOf({ NOTIFY_CHANNELS: " , " })).toBeUndefined();
+    expect(authModeOf({})).toBeUndefined();
   });
 });

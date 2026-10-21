@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildReportPayload, sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
+import {
+  ConsoleNotifier,
+  DiscordNotifier,
+  buildReportPayload,
+  createNotifier,
+  sendDiscordAlert,
+  sendDiscordReport,
+} from "../src/notifier.js";
 import type { FinishedSession } from "../src/timelineRecorder.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/abc/xyz";
@@ -226,5 +233,109 @@ describe("VOD リンク", () => {
     );
     expect(buildReportPayload({ ...session, stream: null }, "https://x").peakVodUrl).toBeUndefined();
     expect(buildReportPayload({ ...session, peakAt: null }, "https://x").peakVodUrl).toBeUndefined();
+  });
+});
+
+describe("ConsoleNotifier", () => {
+  function logged(): string {
+    return vi.mocked(console.log).mock.calls.map((args) => args.join(" ")).join("\n");
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  it("アラートの内容をコンソールに出し、Discord には送らない", async () => {
+    await new ConsoleNotifier().send({
+      channel: "foo",
+      title: "やばい配信",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/foo",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const out = logged();
+    expect(out).toContain("foo");
+    expect(out).toContain("やばい配信");
+    expect(out).toContain("40");
+    expect(out).toContain("8.0倍");
+    expect(out).toContain("https://twitch.tv/foo");
+    expect(out).not.toContain("VOD");
+  });
+
+  it("VOD リンクがあればアラート・レポートとも一緒に出す", async () => {
+    const notifier = new ConsoleNotifier();
+    await notifier.send({
+      channel: "foo",
+      title: "t",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/foo",
+      vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s",
+    });
+    await notifier.sendReport({
+      channel: "foo",
+      title: "t",
+      url: "https://x/reports/1",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h20m0s",
+    });
+
+    const out = logged();
+    expect(out).toContain("VOD: https://www.twitch.tv/videos/v1?t=0h10m0s");
+    expect(out).toContain("ピークの VOD: https://www.twitch.tv/videos/v1?t=0h20m0s");
+  });
+
+  it("振り返りレポートの内容をコンソールに出し、Discord には送らない", async () => {
+    await new ConsoleNotifier().sendReport({
+      channel: "shroud",
+      title: "PUBG ランク",
+      url: "https://x/reports/abc123",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const out = logged();
+    expect(out).not.toContain("VOD");
+    expect(out).toContain("shroud の配信が終了");
+    expect(out).toContain("PUBG ランク");
+    expect(out).toContain("配信時間 83 分");
+    expect(out).toContain("https://x/reports/abc123");
+  });
+
+  it("ChatGust 終了による確定は、配信終了と区別した見出しと「記録時間」で出す", async () => {
+    await new ConsoleNotifier().sendReport({
+      channel: "shroud",
+      title: "PUBG",
+      url: "https://x/reports/1",
+      durationMin: 42,
+      peakRate: 7,
+      endReason: "shutdown",
+    });
+
+    const out = logged();
+    expect(out).toContain("途中まで");
+    expect(out).not.toContain("配信が終了");
+    expect(out).toContain("記録時間 42 分");
+  });
+});
+
+describe("createNotifier", () => {
+  it("Webhook が無ければコンソール出力を選び、その旨をログする", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(createNotifier(undefined)).toBeInstanceOf(ConsoleNotifier);
+    expect(logSpy.mock.calls.join("\n")).toContain("コンソールに出力");
+  });
+
+  it("Webhook があれば Discord に送る", async () => {
+    const notifier = createNotifier(WEBHOOK);
+    expect(notifier).toBeInstanceOf(DiscordNotifier);
+    await notifier.send({ channel: "foo", title: "t", rate: 10, baseline: 1, streamUrl: "https://twitch.tv/foo" });
+    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK);
   });
 });

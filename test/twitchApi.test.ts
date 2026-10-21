@@ -3,6 +3,7 @@ import {
   getArchiveVideoId,
   getCurrentUser,
   getFollowedChannels,
+  getAppAccessToken,
   getLiveStreams,
   refreshAccessToken,
   TwitchAuthError,
@@ -176,5 +177,27 @@ describe("refreshAccessToken", () => {
   it("失敗応答ならエラーを投げる", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "bad" }, 400));
     await expect(refreshAccessToken(CLIENT_ID, "secret", "oldR")).rejects.toThrow(/refresh failed/i);
+  });
+});
+
+describe("getAppAccessToken", () => {
+  it("client_credentials グラントで POST しアクセストークンを返す", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ access_token: "appTok", expires_in: 5000000, token_type: "bearer" })
+    );
+
+    await expect(getAppAccessToken(CLIENT_ID, "secret")).resolves.toBe("appTok");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://id.twitch.tv/oauth2/token");
+    expect(init.method).toBe("POST");
+    const body = init.body.toString();
+    expect(body).toContain("grant_type=client_credentials");
+    expect(body).toContain("client_secret=secret");
+  });
+
+  it("失敗応答ならエラーを投げる", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: "invalid client secret" }, 403));
+    await expect(getAppAccessToken(CLIENT_ID, "bad")).rejects.toThrow(/App token request failed/);
   });
 });

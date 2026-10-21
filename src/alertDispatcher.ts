@@ -1,3 +1,4 @@
+import { Cooldown } from "./cooldown.js";
 import type { Notifier } from "./notifier.js";
 import { vodLinkForWindow, type StreamRef } from "./vod.js";
 
@@ -15,14 +16,16 @@ const MAX_RECENT = 50;
  * Notifier を通じた通知の送信を行う。通知先ごとの送信処理は Notifier 側が受け持つ。
  */
 export class AlertDispatcher {
-  private readonly cooldowns = new Map<string, number>();
+  private readonly cooldown: Cooldown;
   private readonly recentAlerts: RecentAlert[] = [];
 
   constructor(
     private readonly notifier: Notifier,
-    private readonly cooldownMs: number,
+    cooldownMs: number,
     private readonly now: () => number = () => Date.now()
-  ) {}
+  ) {
+    this.cooldown = new Cooldown(cooldownMs, now);
+  }
 
   /** クールダウン経過後のみ、履歴を記録して通知を送る。 */
   dispatch(
@@ -32,9 +35,7 @@ export class AlertDispatcher {
     title: string,
     stream?: StreamRef
   ): void {
-    const last = this.cooldowns.get(channel) ?? 0;
-    if (this.now() - last < this.cooldownMs) return;
-    this.cooldowns.set(channel, this.now());
+    if (!this.cooldown.tryAcquire(channel)) return;
 
     const entry: RecentAlert = { channel, rate, baseline, at: new Date().toISOString() };
     this.recentAlerts.unshift(entry);

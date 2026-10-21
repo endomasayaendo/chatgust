@@ -8,7 +8,8 @@ import {
 } from "./twitchApi.js";
 import { filterChannels } from "./notifyFilter.js";
 import type { ChatMonitor } from "./chatMonitor.js";
-import type { TokenStore } from "./tokenStore.js";
+import type { AuthMode } from "./config.js";
+import type { AccessTokenSource } from "./tokenStore.js";
 
 /**
  * StreamSync が利用する Twitch API の操作群。
@@ -36,8 +37,9 @@ export const defaultTwitchApi: TwitchApi = {
 
 /**
  * フォロー中チャンネルの取得 → 許可リストでの絞り込み → ライブ配信の取得 → ChatMonitor への
- * join/part 反映、という定期同期の責務を担う。トークン失効（401）を検知したら TokenStore に
+ * join/part 反映、という定期同期の責務を担う。トークン失効（401）を検知したら tokenStore に
  * リフレッシュを依頼し、次回サイクルでユーザー ID を取り直す。
+ * app モード（ユーザートークン無し）はフォロー一覧を取れないため、許可リストをそのまま監視対象にする。
  *
  * 各配信のアーカイブ VOD もここで引いて join に添える。アラート発火時に引くと通知が遅れるため、
  * 同期のついでに先回りして解決しておく。見つかるまで（VOD を保存しないチャンネルでは配信中ずっと）
@@ -50,21 +52,17 @@ export class StreamSync {
 
   constructor(
     private readonly clientId: string,
-    private readonly tokenStore: TokenStore,
+    private readonly tokenStore: AccessTokenSource,
     private readonly monitor: ChatMonitor,
     private readonly notifyChannels: Set<string>,
+    private readonly authMode: AuthMode,
     private readonly api: TwitchApi = defaultTwitchApi
   ) {}
 
   async sync(): Promise<void> {
     try {
       const token = this.tokenStore.accessToken;
-      if (!this.userId) {
-        const user = await this.api.getCurrentUser(this.clientId, token);
-        this.userId = user.id;
-      }
-      const followed = await this.api.getFollowedChannels(this.clientId, token, this.userId);
-      const targets = filterChannels(followed, this.notifyChannels);
+      const targets = await this.resolveTargets(token);
       const live = await this.api.getLiveStreams(this.clientId, token, targets);
 
       const liveSet = new Set(live.map((s) => s.login));
@@ -93,6 +91,17 @@ export class StreamSync {
       }
       console.error("[sync] Error:", (err as Error).message);
     }
+  }
+
+  /** ライブ判定の対象にするチャンネル login 一覧。 */
+  private async resolveTargets(token: string): Promise<string[]> {
+    if (this.authMode === "app") return [...this.notifyChannels];
+    if (!this.userId) {
+      const user = await this.api.getCurrentUser(this.clientId, token);
+      this.userId = user.id;
+    }
+    const followed = await this.api.getFollowedChannels(this.clientId, token, this.userId);
+    return filterChannels(followed, this.notifyChannels);
   }
 
   /** 配信を、分かっている VOD とともに monitor に join する。 */
