@@ -7,7 +7,8 @@ import { parseAllowlist } from "./notifyFilter.js";
 export interface Config {
   twitchClientId: string;
   twitchClientSecret: string;
-  discordWebhookUrl: string;
+  /** 未設定なら通知はコンソールに出力する（ConsoleNotifier）。 */
+  discordWebhookUrl?: string;
   dashboardPassword?: string;
   notifyChannels: Set<string>;
   port: number;
@@ -55,7 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const accessToken = TWITCH_ACCESS_TOKEN ?? "";
   const port = positiveNumber(PORT, "PORT");
 
-  if (!TWITCH_CLIENT_ID || !accessToken || !DISCORD_WEBHOOK_URL) {
+  if (!TWITCH_CLIENT_ID || !accessToken) {
     throw new Error(
       "Missing required env vars. Copy .env.example to .env and fill in the values."
     );
@@ -64,7 +65,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     twitchClientId: TWITCH_CLIENT_ID,
     twitchClientSecret: TWITCH_CLIENT_SECRET ?? "",
-    discordWebhookUrl: DISCORD_WEBHOOK_URL,
+    // 空文字（.env に `DISCORD_WEBHOOK_URL=` と空で置かれる）も未設定扱いにする。
+    discordWebhookUrl: DISCORD_WEBHOOK_URL || undefined,
     dashboardPassword: DASHBOARD_PASSWORD,
     notifyChannels: parseAllowlist(NOTIFY_CHANNELS),
     port,

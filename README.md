@@ -98,7 +98,10 @@ flowchart LR
 </details>
 
 <details>
-<summary><b>Discord Webhook の作成</b></summary>
+<summary><b>Discord Webhook の作成（任意）</b></summary>
+
+未設定でも動く。その場合、通知（アラート・振り返り）は Discord ではなくコンソール（`make up` のログ）に出力される。開発中に通知の中身だけ見たいときはこれで十分。
+
 
 1. 通知を送りたいチャンネルの **設定（歯車アイコン）** を開く
 2. **連携サービス → ウェブフック → 新しいウェブフック** で作成
@@ -118,7 +121,7 @@ cd chatgust
 make setup   # .env を作成し、足りない値と取得場所を表示
 ```
 
-`.env` の **① 自分で書く** 3項目（`TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` / `DISCORD_WEBHOOK_URL`）を記入し、もう一度 `make setup` で ✅ になることを確認する。
+`.env` の **① 自分で書く** 2項目（`TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET`）を記入し、もう一度 `make setup` で ✅ になることを確認する。Discord に通知したい場合は **③ 任意** の `DISCORD_WEBHOOK_URL` も書く。
 
 ```bash
 make auth    # 表示された URL をブラウザで開き Twitch にログイン（トークンが .env に自動保存される・初回のみ）
@@ -126,7 +129,7 @@ make up      # 起動
 ```
 
 `http://localhost:3000` でダッシュボードを確認できる。
-あとは起動したまま放置すれば、フォロー中の配信のチャットが盛り上がった瞬間に **Discord へ通知が届く**。
+あとは起動したまま放置すれば、フォロー中の配信のチャットが盛り上がった瞬間に **Discord へ通知が届く**（`DISCORD_WEBHOOK_URL` 未設定ならコンソールに出力）。
 
 | コマンド | 内容 |
 | --- | --- |
@@ -243,7 +246,7 @@ baseline < 1 の場合（配信開始直後など）:
 | 変数                 | デフォルト | 説明                                                                                                                 |
 | -------------------- | :--------: | -------------------------------------------------------------------------------------------------------------------- |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | **必須** | Twitch アプリの ID / シークレット（取得場所は `.env.example` のコメント、または `make setup` の表示を参照） |
-| `DISCORD_WEBHOOK_URL` | **必須** | 通知先の Discord Webhook URL |
+| `DISCORD_WEBHOOK_URL` | （未設定） | 通知先の Discord Webhook URL。未設定なら通知はコンソールに出力する |
 | `TWITCH_ACCESS_TOKEN` / `TWITCH_REFRESH_TOKEN` | （自動） | `make auth` / `npm run auth` が書き込む。手で書かない |
 | `HOST_PORT` | `3000` | `make up` でダッシュボードを開くホスト側のポート |
 | `PORT` | `3000` | `npm start` で直接動かすときのポート（Docker では使わない） |
@@ -308,7 +311,7 @@ chatgust/
 │   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ + zスコア）
 │   ├── spikePolicy.ts    # アラート発火ポリシー（2連続スパイクで確定）
 │   ├── alertDispatcher.ts# クールダウン・履歴・通知の送出
-│   ├── notifier.ts       # Discord Webhook 送信（アラート + 振り返りレポート通知）
+│   ├── notifier.ts       # 通知の送信（Discord Webhook / 未設定時はコンソール。アラート + 振り返りレポート）
 │   ├── notifyFilter.ts   # 通知対象の絞り込み（許可リスト）
 │   ├── db.ts             # 振り返りDB（SQLite）の接続・スキーマ・WAL
 │   ├── timelineRepository.ts # 振り返りデータの永続化（sessions / samples の読み書き）

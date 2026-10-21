@@ -47,12 +47,31 @@ export class DiscordNotifier implements Notifier, ReportNotifier {
   }
 }
 
+/**
+ * Discord を設定していないとき（開発中など）の代替。通知内容をコンソールに出力する。
+ * Webhook を作らなくても、どんな通知が飛ぶかをその場で確認できる。
+ */
+export class ConsoleNotifier implements Notifier, ReportNotifier {
+  async send({ channel, title, rate, baseline, streamUrl }: AlertPayload): Promise<void> {
+    console.log(
+      `[notify] 🔥 ${channel} のチャットが盛り上がってる！「${title}」` +
+        ` 直近30秒 ${rate} メッセージ（通常の${formatMultiplier(rate, baseline)}倍・ベースライン ${baseline.toFixed(1)} 件/30秒） ${streamUrl}`
+    );
+  }
+
+  async sendReport(payload: ReportPayload): Promise<void> {
+    const durationLabel = payload.endReason === "shutdown" ? "記録時間" : "配信時間";
+    console.log(
+      `[notify] ${reportHeading(payload)}「${payload.title}」` +
+        ` ${durationLabel} ${payload.durationMin} 分・ピーク流速 ${payload.peakRate} 件/30秒 ${payload.url}`
+    );
+  }
+}
+
 export async function sendDiscordAlert(
   webhookUrl: string,
   { channel, title, rate, baseline, streamUrl }: AlertPayload
 ): Promise<void> {
-  const multiplier = baseline > 0 ? (rate / baseline).toFixed(1) : "∞";
-
   const payload = {
     embeds: [
       {
@@ -61,7 +80,7 @@ export async function sendDiscordAlert(
         color: 0xff4500,
         fields: [
           { name: "直近30秒", value: `${rate} メッセージ`, inline: true },
-          { name: "通常の", value: `${multiplier}倍`, inline: true },
+          { name: "通常の", value: `${formatMultiplier(rate, baseline)}倍`, inline: true },
           { name: "ベースライン", value: `${baseline.toFixed(1)} 件/30秒`, inline: true },
         ],
         timestamp: new Date().toISOString(),
@@ -72,18 +91,13 @@ export async function sendDiscordAlert(
   await postToDiscord(webhookUrl, payload, "webhook");
 }
 
-export async function sendDiscordReport(
-  webhookUrl: string,
-  { channel, title, url, durationMin, peakRate, endReason }: ReportPayload
-): Promise<void> {
-  // 配信中に ChatGust が終了した場合は、配信終了と誤解させないよう見出しを分ける。
+export async function sendDiscordReport(webhookUrl: string, report: ReportPayload): Promise<void> {
+  const { title, url, durationMin, peakRate, endReason } = report;
   const interrupted = endReason === "shutdown";
   const payload = {
     embeds: [
       {
-        title: interrupted
-          ? `⏸ ${channel} の振り返り（ChatGust 再起動のため途中まで）`
-          : `🎬 ${channel} の配信が終了 — 振り返り`,
+        title: reportHeading(report),
         description: `**${escapeMarkdown(title)}**\n[振り返りを見る](${url})`,
         color: 0x9146ff,
         fields: [
@@ -96,6 +110,18 @@ export async function sendDiscordReport(
   };
 
   await postToDiscord(webhookUrl, payload, "report webhook");
+}
+
+/** ベースライン比の倍率（ベースライン 0 なら ∞）。 */
+function formatMultiplier(rate: number, baseline: number): string {
+  return baseline > 0 ? (rate / baseline).toFixed(1) : "∞";
+}
+
+/** 振り返りレポートの見出し。配信中に ChatGust が終了した場合は、配信終了と誤解させないよう分ける。 */
+function reportHeading({ channel, endReason }: ReportPayload): string {
+  return endReason === "shutdown"
+    ? `⏸ ${channel} の振り返り（ChatGust 再起動のため途中まで）`
+    : `🎬 ${channel} の配信が終了 — 振り返り`;
 }
 
 /** 確定したセッションと公開URLの基点から、レポート通知のペイロードを組み立てる。 */

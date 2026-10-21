@@ -8,10 +8,15 @@ const base = {
 };
 
 describe("loadConfig", () => {
-  it("必須 env（CLIENT_ID/ACCESS_TOKEN/WEBHOOK）が欠けると throw", () => {
+  it("必須 env（CLIENT_ID/ACCESS_TOKEN）が欠けると throw", () => {
     expect(() => loadConfig({ ...base, TWITCH_CLIENT_ID: undefined })).toThrow(/Missing required/);
     expect(() => loadConfig({ ...base, TWITCH_ACCESS_TOKEN: undefined })).toThrow(/Missing required/);
-    expect(() => loadConfig({ ...base, DISCORD_WEBHOOK_URL: undefined })).toThrow(/Missing required/);
+  });
+
+  it("DISCORD_WEBHOOK_URL は任意（未設定・空文字なら undefined）", () => {
+    expect(loadConfig({ ...base, DISCORD_WEBHOOK_URL: undefined }).discordWebhookUrl).toBeUndefined();
+    expect(loadConfig({ ...base, DISCORD_WEBHOOK_URL: "" }).discordWebhookUrl).toBeUndefined();
+    expect(loadConfig(base).discordWebhookUrl).toBe("https://discord.com/api/webhooks/x");
   });
 
   it("不正な数値（0・非数）は throw する", () => {

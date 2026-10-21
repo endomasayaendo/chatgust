@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
+import { ConsoleNotifier, sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/abc/xyz";
 
@@ -170,5 +170,67 @@ describe("sendDiscordReport", () => {
     expect(embed.title).not.toContain("配信が終了");
     const durField = embed.fields.find((f: { name: string }) => f.name === "記録時間");
     expect(durField.value).toContain("42");
+  });
+});
+
+describe("ConsoleNotifier", () => {
+  function logged(): string {
+    return vi.mocked(console.log).mock.calls.map((args) => args.join(" ")).join("\n");
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  it("アラートの内容をコンソールに出し、Discord には送らない", async () => {
+    await new ConsoleNotifier().send({
+      channel: "foo",
+      title: "やばい配信",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/foo",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const out = logged();
+    expect(out).toContain("foo");
+    expect(out).toContain("やばい配信");
+    expect(out).toContain("40");
+    expect(out).toContain("8.0倍");
+    expect(out).toContain("https://twitch.tv/foo");
+  });
+
+  it("振り返りレポートの内容をコンソールに出し、Discord には送らない", async () => {
+    await new ConsoleNotifier().sendReport({
+      channel: "shroud",
+      title: "PUBG ランク",
+      url: "https://x/reports/abc123",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const out = logged();
+    expect(out).toContain("shroud の配信が終了");
+    expect(out).toContain("PUBG ランク");
+    expect(out).toContain("配信時間 83 分");
+    expect(out).toContain("https://x/reports/abc123");
+  });
+
+  it("ChatGust 終了による確定は、配信終了と区別した見出しと「記録時間」で出す", async () => {
+    await new ConsoleNotifier().sendReport({
+      channel: "shroud",
+      title: "PUBG",
+      url: "https://x/reports/1",
+      durationMin: 42,
+      peakRate: 7,
+      endReason: "shutdown",
+    });
+
+    const out = logged();
+    expect(out).toContain("途中まで");
+    expect(out).not.toContain("配信が終了");
+    expect(out).toContain("記録時間 42 分");
   });
 });
