@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
 import { parseArgs } from "util";
+import { loadDetectorSettings } from "../src/config.js";
 import { openDb } from "../src/db.js";
 import { SqliteTimelineRepository, type Sample, type SessionWithSamples } from "../src/timelineRepository.js";
 import { BASELINE_SAMPLES, WARMUP_MS, WINDOW_SECS, judgeSpike, type SpikeParams } from "../src/rateDetector.js";
@@ -31,10 +32,11 @@ export interface BacktestAlert {
 }
 
 const WINDOW_MS = WINDOW_SECS * 1000;
-/** 「k窓前の時点」のサンプルとして採用する時刻のずれの許容幅（サンプル間隔 5 秒の半分）。 */
-const SAMPLE_TOLERANCE_MS = 2_500;
 
-/** t に最も近いサンプルの rate（許容幅内に無ければ 0）。samples は t 昇順。 */
+/**
+ * t に最も近いサンプルの rate。samples は t 昇順。
+ * タイマーの遅れで記録が欠けても 0 件扱いにはしない（ベースラインが下がり、本番に無い誤報が出るため）。
+ */
 function rateNear(samples: Sample[], t: number): number {
   let lo = 0;
   let hi = samples.length;
@@ -43,13 +45,11 @@ function rateNear(samples: Sample[], t: number): number {
     if (samples[mid].t < t) lo = mid + 1;
     else hi = mid;
   }
-  let best: Sample | undefined;
-  for (const s of [samples[lo - 1], samples[lo]]) {
-    if (s && Math.abs(s.t - t) <= SAMPLE_TOLERANCE_MS && (!best || Math.abs(s.t - t) < Math.abs(best.t - t))) {
-      best = s;
-    }
-  }
-  return best?.rate ?? 0;
+  const before = samples[lo - 1];
+  const after = samples[lo];
+  if (!before) return after?.rate ?? 0;
+  if (!after) return before.rate;
+  return t - before.t <= after.t - t ? before.rate : after.rate;
 }
 
 /**
@@ -109,12 +109,10 @@ export function parseParams(spec: string, base: BacktestParams): BacktestParams 
   return params;
 }
 
-/** 現行パラメータ（.env、無ければ本番と同じ既定値）。 */
+/** 現行パラメータ（本番と同じ loadDetectorSettings で .env / 既定値から読む）。 */
 function currentParams(env: NodeJS.ProcessEnv): BacktestParams {
-  return parseParams(
-    `z=${env.SPIKE_Z || 3.0},threshold=${env.SPIKE_THRESHOLD || 8},minRate=${env.MIN_RATE || 5},cooldown=${env.COOLDOWN_MIN || 5}`,
-    { z: 0, threshold: 0, minRate: 0, cooldownMin: 0 }
-  );
+  const { spikeZ, spikeThreshold, minRate, cooldownMin } = loadDetectorSettings(env);
+  return { z: spikeZ, threshold: spikeThreshold, minRate, cooldownMin };
 }
 
 function jst(ms: number, withDate: boolean): string {
@@ -151,14 +149,20 @@ function main(): void {
   const names = sets.map((_, i) => String.fromCharCode(65 + i)); // A, B, C…
 
   const db = openDb(dbPath);
-  const repo = new SqliteTimelineRepository(db);
-  const ids = values.session ?? repo.listReports(Number.MAX_SAFE_INTEGER).map((r) => r.id).reverse();
-  const sessions = ids.map((id) => {
-    const s = repo.getSession(id);
-    if (!s) throw new Error(`session not found: ${id}`);
-    return s;
-  });
-  db.close();
+  let sessions: SessionWithSamples[];
+  try {
+    const repo = new SqliteTimelineRepository(db);
+    const ids = values.session ?? repo.listReports(Number.MAX_SAFE_INTEGER).map((r) => r.id).reverse();
+    sessions = ids.flatMap((id) => repo.getSession(id) ?? []);
+    const missing = ids.filter((id) => !sessions.some((s) => s.id === id));
+    if (missing.length > 0) {
+      console.error(`✗ セッションが見つかりません: ${missing.join(", ")}（id はダッシュボードのレポートURL /reports/<id>）`);
+      process.exitCode = 1;
+      return;
+    }
+  } finally {
+    db.close();
+  }
 
   console.log(`バックテスト: ${dbPath}（${sessions.length} セッション）`);
   console.log(

@@ -50,13 +50,13 @@ describe("reconstructWindowCounts", () => {
     expect(reconstructWindowCounts(s, 150_000)).toEqual([24, 18, 12, 6, 0, 0, 0, 0, 0, 0]);
   });
 
-  it("サンプルの時刻ずれは許容幅（2.5秒）以内なら採用し、記録の欠けは 0", () => {
+  it("時刻ずれ・記録の欠けがあっても 0 件にはせず、最も近いサンプルで埋める", () => {
     const s: Sample[] = [
-      { t: 28_000, rate: 7 }, // 30000 の 2 秒前 → 採用
-      { t: 56_000, rate: 9 }, // 60000 の 4 秒前 → 欠け扱い
+      { t: 28_000, rate: 7 }, // 30000 に最も近い
+      { t: 52_000, rate: 9 }, // 60000 の 8 秒前（間が欠けている）
       { t: 90_000, rate: 1 },
     ];
-    expect(reconstructWindowCounts(s, 90_000).slice(0, 3)).toEqual([0, 7, 0]);
+    expect(reconstructWindowCounts(s, 90_000).slice(0, 3)).toEqual([9, 7, 0]);
   });
 });
 
