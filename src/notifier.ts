@@ -1,4 +1,5 @@
 import type { EndReason, FinishedSession } from "./timelineRecorder.js";
+import { vodLinkForWindow } from "./vod.js";
 
 export interface AlertPayload {
   channel: string;
@@ -6,6 +7,8 @@ export interface AlertPayload {
   rate: number;
   baseline: number;
   streamUrl: string;
+  /** 盛り上がり始めを指す VOD のタイムスタンプリンク（VOD が無ければ undefined）。 */
+  vodUrl?: string;
 }
 
 /** 配信終了時の振り返りレポート通知のペイロード。 */
@@ -16,6 +19,8 @@ export interface ReportPayload {
   durationMin: number;
   peakRate: number;
   endReason: EndReason;
+  /** ピークの場面を指す VOD のタイムスタンプリンク（VOD が無ければ undefined）。 */
+  peakVodUrl?: string;
 }
 
 /**
@@ -49,15 +54,17 @@ export class DiscordNotifier implements Notifier, ReportNotifier {
 
 export async function sendDiscordAlert(
   webhookUrl: string,
-  { channel, title, rate, baseline, streamUrl }: AlertPayload
+  { channel, title, rate, baseline, streamUrl, vodUrl }: AlertPayload
 ): Promise<void> {
   const multiplier = baseline > 0 ? (rate / baseline).toFixed(1) : "∞";
+  const links = [`[配信を見る](${streamUrl})`];
+  if (vodUrl) links.push(`[この場面を VOD で見る](${vodUrl})`);
 
   const payload = {
     embeds: [
       {
         title: `${channel} のチャットが盛り上がってる！`,
-        description: `**${escapeMarkdown(title)}**\n[配信を見る](${streamUrl})`,
+        description: `**${escapeMarkdown(title)}**\n${links.join(" ・ ")}`,
         color: 0xff4500,
         fields: [
           { name: "直近30秒", value: `${rate} メッセージ`, inline: true },
@@ -74,7 +81,7 @@ export async function sendDiscordAlert(
 
 export async function sendDiscordReport(
   webhookUrl: string,
-  { channel, title, url, durationMin, peakRate, endReason }: ReportPayload
+  { channel, title, url, durationMin, peakRate, endReason, peakVodUrl }: ReportPayload
 ): Promise<void> {
   // 配信中に ChatGust が終了した場合は、配信終了と誤解させないよう見出しを分ける。
   const interrupted = endReason === "shutdown";
@@ -88,7 +95,13 @@ export async function sendDiscordReport(
         color: 0x9146ff,
         fields: [
           { name: interrupted ? "記録時間" : "配信時間", value: `${durationMin} 分`, inline: true },
-          { name: "ピーク流速", value: `${peakRate} 件/30秒`, inline: true },
+          {
+            name: "ピーク流速",
+            value: peakVodUrl
+              ? `${peakRate} 件/30秒（[VOD で見る](${peakVodUrl})）`
+              : `${peakRate} 件/30秒`,
+            inline: true,
+          },
         ],
         timestamp: new Date().toISOString(),
       },
@@ -107,6 +120,7 @@ export function buildReportPayload(session: FinishedSession, baseUrl: string): R
     durationMin: Math.round((session.endedAt - session.startedAt) / 60000),
     peakRate: session.peakRate,
     endReason: session.endReason,
+    peakVodUrl: session.peakAt === null ? undefined : vodLinkForWindow(session.stream, session.peakAt),
   };
 }
 

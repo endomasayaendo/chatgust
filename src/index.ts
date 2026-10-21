@@ -57,7 +57,8 @@ const recorder = new TimelineRecorder(repo, (s) =>
 );
 
 const monitor = new ChatMonitor(
-  (channel, rate, baseline, title) => dispatcher.dispatch(channel, rate, baseline, title),
+  (channel, rate, baseline, title, stream) =>
+    dispatcher.dispatch(channel, rate, baseline, title, stream),
   { spikeThreshold: config.spikeThreshold, minRate: config.minRate, spikeZ: config.spikeZ },
   { observer: recorder }
 );

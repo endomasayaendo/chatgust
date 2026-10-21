@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import type { Db } from "./db.js";
+import type { StreamRef } from "./vod.js";
 
 /** 波形の1点。t は配信（セッション）開始からの経過ミリ秒。 */
 export interface Sample {
@@ -24,6 +25,8 @@ export interface SessionWithSamples {
   title: string;
   startedAt: number;
   endedAt: number | null;
+  /** VOD リンク用の配信情報（記録前の旧データなど、不明なら null）。 */
+  stream: StreamRef | null;
   samples: Sample[];
 }
 
@@ -33,13 +36,15 @@ export interface SessionWithSamples {
  */
 export interface TimelineRepository {
   /** 配信の記録を開始し、生成した推測不能なセッション id を返す。 */
-  startSession(channel: string, title: string, startedAt: number): string;
+  startSession(channel: string, title: string, startedAt: number, stream?: StreamRef): string;
   /** 1点のサンプルを追記する。 */
   addSample(sessionId: string, t: number, rate: number): void;
   /** 配信の終了時刻を記録する。 */
   endSession(sessionId: string, endedAt: number): void;
   /** 配信中のタイトル変更を反映する。 */
   updateTitle(sessionId: string, title: string): void;
+  /** 配信中に見つかったアーカイブ VOD の id を記録する。 */
+  updateVodId(sessionId: string, vodId: string): void;
   /** 未終了（前回クラッシュ由来など）のセッションを、直近サンプル時刻で閉じる。 */
   closeDangling(): void;
   /** 新しい順にレポート要約を最大 limit 件返す。 */
@@ -54,6 +59,9 @@ interface SessionRow {
   title: string;
   started_at: number;
   ended_at: number | null;
+  stream_id: string | null;
+  stream_started_at: number | null;
+  vod_id: string | null;
 }
 
 interface SummaryRow extends SessionRow {
@@ -66,6 +74,7 @@ export class SqliteTimelineRepository implements TimelineRepository {
   private readonly insertSample;
   private readonly updateEnd;
   private readonly updateTitleStmt;
+  private readonly updateVodIdStmt;
   private readonly selectSession;
   private readonly selectSamples;
   private readonly selectSummaries;
@@ -73,13 +82,14 @@ export class SqliteTimelineRepository implements TimelineRepository {
 
   constructor(private readonly db: Db) {
     this.insertSession = db.prepare(
-      "INSERT INTO sessions (id, channel, title, started_at) VALUES (?, ?, ?, ?)"
+      "INSERT INTO sessions (id, channel, title, started_at, stream_id, stream_started_at, vod_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
     );
     this.insertSample = db.prepare(
       "INSERT INTO samples (session_id, t, rate) VALUES (?, ?, ?)"
     );
     this.updateEnd = db.prepare("UPDATE sessions SET ended_at = ? WHERE id = ?");
     this.updateTitleStmt = db.prepare("UPDATE sessions SET title = ? WHERE id = ?");
+    this.updateVodIdStmt = db.prepare("UPDATE sessions SET vod_id = ? WHERE id = ?");
     this.selectSession = db.prepare("SELECT * FROM sessions WHERE id = ?");
     this.selectSamples = db.prepare(
       "SELECT t, rate FROM samples WHERE session_id = ? ORDER BY t ASC"
@@ -103,9 +113,17 @@ export class SqliteTimelineRepository implements TimelineRepository {
     `);
   }
 
-  startSession(channel: string, title: string, startedAt: number): string {
+  startSession(channel: string, title: string, startedAt: number, stream?: StreamRef): string {
     const id = crypto.randomBytes(6).toString("hex");
-    this.insertSession.run(id, channel, title, startedAt);
+    this.insertSession.run(
+      id,
+      channel,
+      title,
+      startedAt,
+      stream?.streamId ?? null,
+      stream?.startedAt ?? null,
+      stream?.vodId ?? null
+    );
     return id;
   }
 
@@ -119,6 +137,10 @@ export class SqliteTimelineRepository implements TimelineRepository {
 
   updateTitle(sessionId: string, title: string): void {
     this.updateTitleStmt.run(title, sessionId);
+  }
+
+  updateVodId(sessionId: string, vodId: string): void {
+    this.updateVodIdStmt.run(vodId, sessionId);
   }
 
   closeDangling(): void {
@@ -147,6 +169,10 @@ export class SqliteTimelineRepository implements TimelineRepository {
       title: row.title,
       startedAt: row.started_at,
       endedAt: row.ended_at,
+      stream:
+        row.stream_id !== null && row.stream_started_at !== null
+          ? { streamId: row.stream_id, startedAt: row.stream_started_at, vodId: row.vod_id }
+          : null,
       samples,
     };
   }

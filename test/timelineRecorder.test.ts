@@ -177,4 +177,38 @@ describe("TimelineRecorder", () => {
       expect(reports).toHaveLength(0);
     });
   });
+
+  describe("配信情報（VOD）", () => {
+    const stream = { streamId: "s1", startedAt: 0, vodId: null };
+
+    it("ピーク時刻と配信情報をレポートに渡し、後から見つかった VOD も反映する", () => {
+      recorder.onJoin("a", "A", stream);
+      clock = 5000;
+      recorder.onSample("a", 9); // peak
+      clock = 9000;
+      recorder.onSample("a", 9); // 同値は更新しない（最初の山を指す）
+      recorder.onVodFound("a", "v1");
+      clock = 12000;
+      recorder.onPart("a");
+
+      expect(reports[0]).toMatchObject({
+        peakAt: 5000,
+        stream: { streamId: "s1", startedAt: 0, vodId: "v1" },
+      });
+      expect(repo.getSession(reports[0].id)!.stream).toEqual({
+        streamId: "s1",
+        startedAt: 0,
+        vodId: "v1",
+      });
+    });
+
+    it("配信情報なしで join したら stream=null、サンプルが無ければ peakAt=null", () => {
+      recorder.onJoin("a", "A");
+      recorder.onVodFound("a", "v1"); // 照合できる配信情報が無いので無視
+      recorder.onPart("a");
+
+      expect(reports[0]).toMatchObject({ peakAt: null, stream: null });
+      expect(repo.getSession(reports[0].id)!.stream).toBeNull();
+    });
+  });
 });

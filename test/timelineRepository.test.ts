@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
 import { openDb } from "../src/db.js";
 import { SqliteTimelineRepository } from "../src/timelineRepository.js";
 
@@ -82,5 +86,53 @@ describe("SqliteTimelineRepository", () => {
     repo.endSession(id, 4242);
     repo.closeDangling();
     expect(repo.getSession(id)!.endedAt).toBe(4242);
+  });
+});
+
+describe("配信情報（VOD）の永続化", () => {
+  it("startSession の配信情報と updateVodId が getSession で返る", () => {
+    const repo = makeRepo();
+    const id = repo.startSession("a", "t", 1000, { streamId: "s1", startedAt: 500, vodId: null });
+    expect(repo.getSession(id)!.stream).toEqual({ streamId: "s1", startedAt: 500, vodId: null });
+
+    repo.updateVodId(id, "v1");
+    expect(repo.getSession(id)!.stream).toEqual({ streamId: "s1", startedAt: 500, vodId: "v1" });
+  });
+
+  it("配信情報なしのセッションは stream=null", () => {
+    const repo = makeRepo();
+    const id = repo.startSession("a", "t", 1000);
+    expect(repo.getSession(id)!.stream).toBeNull();
+  });
+
+  it("列追加前の既存 DB を開くと列が追加され、既存行は stream=null で読める", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "chatgust-db-"));
+    try {
+      const dbPath = path.join(dir, "old.db");
+      // 列追加前のスキーマで作った DB（本番に既にあるもの）を再現する
+      const old = new Database(dbPath);
+      old.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY, channel TEXT NOT NULL, title TEXT NOT NULL,
+          started_at INTEGER NOT NULL, ended_at INTEGER
+        );
+        CREATE TABLE samples (session_id TEXT NOT NULL, t INTEGER NOT NULL, rate INTEGER NOT NULL);
+        INSERT INTO sessions (id, channel, title, started_at, ended_at) VALUES ('old1', 'a', 't', 1000, 2000);
+      `);
+      old.close();
+
+      const db = openDb(dbPath);
+      const repo = new SqliteTimelineRepository(db);
+      expect(repo.getSession("old1")).toMatchObject({ id: "old1", endedAt: 2000, stream: null });
+
+      const id = repo.startSession("b", "t", 3000, { streamId: "s1", startedAt: 2500, vodId: "v1" });
+      expect(repo.getSession(id)!.stream).toEqual({ streamId: "s1", startedAt: 2500, vodId: "v1" });
+      db.close();
+
+      // 2回目以降の起動でも（列が既にあっても）落ちない
+      openDb(dbPath).close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

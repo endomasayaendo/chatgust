@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
+import { buildReportPayload, sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
+import type { FinishedSession } from "../src/timelineRecorder.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/abc/xyz";
 
@@ -170,5 +171,60 @@ describe("sendDiscordReport", () => {
     expect(embed.title).not.toContain("配信が終了");
     const durField = embed.fields.find((f: { name: string }) => f.name === "記録時間");
     expect(durField.value).toContain("42");
+  });
+});
+
+describe("VOD リンク", () => {
+  it("アラート embed に VOD リンクがあれば添え、無ければ配信リンクだけにする", async () => {
+    const alert = {
+      channel: "shroud",
+      title: "PUBG",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/shroud",
+    };
+    await sendDiscordAlert(WEBHOOK, { ...alert, vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m00s" });
+    expect(lastPayload().embeds[0].description).toContain(
+      "[この場面を VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m00s)"
+    );
+
+    fetchMock.mockClear();
+    await sendDiscordAlert(WEBHOOK, alert);
+    expect(lastPayload().embeds[0].description).not.toContain("VOD");
+  });
+
+  it("レポート embed のピーク流速に VOD リンクを添える", async () => {
+    await sendDiscordReport(WEBHOOK, {
+      channel: "shroud",
+      title: "PUBG",
+      url: "https://chatgust.fly.dev/reports/abc123",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h10m00s",
+    });
+    const peakField = lastPayload().embeds[0].fields.find(
+      (f: { name: string }) => f.name === "ピーク流速"
+    );
+    expect(peakField.value).toBe("40 件/30秒（[VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m00s)）");
+  });
+
+  it("buildReportPayload はピーク時刻と配信開始から VOD リンクを組み立てる", () => {
+    const session: FinishedSession = {
+      id: "abc123",
+      channel: "shroud",
+      title: "PUBG",
+      startedAt: 600_000,
+      endedAt: 3_600_000,
+      peakRate: 40,
+      peakAt: 1_230_000, // 配信開始から 20分30秒 → 窓の始まりは 20分00秒
+      endReason: "streamEnded",
+      stream: { streamId: "s1", startedAt: 0, vodId: "v1" },
+    };
+    expect(buildReportPayload(session, "https://x").peakVodUrl).toBe(
+      "https://www.twitch.tv/videos/v1?t=0h20m00s"
+    );
+    expect(buildReportPayload({ ...session, stream: null }, "https://x").peakVodUrl).toBeUndefined();
+    expect(buildReportPayload({ ...session, peakAt: null }, "https://x").peakVodUrl).toBeUndefined();
   });
 });

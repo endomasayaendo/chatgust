@@ -1,4 +1,4 @@
-const WINDOW_SECS = 30;
+export const WINDOW_SECS = 30;
 const BASELINE_SAMPLES = 10;
 const MAX_HISTORY_MS = (BASELINE_SAMPLES + 1) * WINDOW_SECS * 1000;
 const WARMUP_MS = 2 * 60 * 1000; // 2 minutes before alerts are allowed

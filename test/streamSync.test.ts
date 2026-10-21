@@ -3,13 +3,16 @@ import { StreamSync, type TwitchApi } from "../src/streamSync.js";
 import { TwitchAuthError, type Stream } from "../src/twitchApi.js";
 import type { ChatMonitor } from "../src/chatMonitor.js";
 import type { TokenStore } from "../src/tokenStore.js";
+import type { StreamRef } from "../src/vod.js";
 
 function fakeMonitor(current: string[] = []) {
-  const joined: { channel: string; title: string }[] = [];
+  const joined: { channel: string; title: string; stream?: StreamRef }[] = [];
   const parted: string[] = [];
   const monitor = {
     getStatus: () => current.map((channel) => ({ channel, title: "", rate: 0, baseline: 0 })),
-    join: vi.fn((channel: string, title: string) => joined.push({ channel, title })),
+    join: vi.fn((channel: string, title: string, stream?: StreamRef) =>
+      joined.push({ channel, title, stream })
+    ),
     part: vi.fn((channel: string) => parted.push(channel)),
   } as unknown as ChatMonitor;
   return { monitor, joined, parted };
@@ -22,7 +25,7 @@ function fakeTokenStore() {
 }
 
 function stream(login: string, title = "T"): Stream {
-  return { login, title, viewerCount: 0 };
+  return { login, title, viewerCount: 0, userId: `id-${login}`, streamId: `s-${login}`, startedAt: 1000 };
 }
 
 beforeEach(() => {
@@ -42,6 +45,7 @@ describe("StreamSync", () => {
       getLiveStreams: vi.fn(async (_c, _t, logins: string[]) =>
         logins.filter((l) => l === "foo").map((l) => stream(l))
       ),
+      getArchiveVideoId: vi.fn().mockResolvedValue(null),
     };
     const { monitor, joined } = fakeMonitor();
     const { store } = fakeTokenStore();
@@ -51,7 +55,9 @@ describe("StreamSync", () => {
 
     // 許可リストで foo のみが getLiveStreams に渡る
     expect(api.getLiveStreams).toHaveBeenCalledWith("cid", "tok", ["foo"]);
-    expect(joined).toEqual([{ channel: "foo", title: "T" }]);
+    expect(joined).toEqual([
+      { channel: "foo", title: "T", stream: { streamId: "s-foo", startedAt: 1000, vodId: null } },
+    ]);
   });
 
   it("ライブから外れた既存チャンネルは part する", async () => {
@@ -59,6 +65,7 @@ describe("StreamSync", () => {
       getCurrentUser: vi.fn().mockResolvedValue({ id: "u1" }),
       getFollowedChannels: vi.fn().mockResolvedValue(["foo", "gone"]),
       getLiveStreams: vi.fn().mockResolvedValue([stream("foo")]),
+      getArchiveVideoId: vi.fn().mockResolvedValue(null),
     };
     const { monitor, parted } = fakeMonitor(["foo", "gone"]); // gone は監視中だが配信終了
     const { store } = fakeTokenStore();
@@ -74,6 +81,7 @@ describe("StreamSync", () => {
       getCurrentUser: vi.fn().mockResolvedValue({ id: "u1" }),
       getFollowedChannels: vi.fn().mockResolvedValue([]),
       getLiveStreams: vi.fn().mockResolvedValue([]),
+      getArchiveVideoId: vi.fn().mockResolvedValue(null),
     };
     const { monitor } = fakeMonitor();
     const { store } = fakeTokenStore();
@@ -94,6 +102,7 @@ describe("StreamSync", () => {
       getCurrentUser,
       getFollowedChannels: vi.fn().mockResolvedValue([]),
       getLiveStreams: vi.fn().mockResolvedValue([]),
+      getArchiveVideoId: vi.fn().mockResolvedValue(null),
     };
     const { monitor } = fakeMonitor();
     const { store, refresh } = fakeTokenStore();
@@ -104,5 +113,52 @@ describe("StreamSync", () => {
 
     await sync.sync(); // userId リセット済みなので再度 getCurrentUser
     expect(getCurrentUser).toHaveBeenCalledTimes(2);
+  });
+
+  describe("VOD の解決", () => {
+    function apiWithVod(getArchiveVideoId: TwitchApi["getArchiveVideoId"]): TwitchApi {
+      return {
+        getCurrentUser: vi.fn().mockResolvedValue({ id: "u1" }),
+        getFollowedChannels: vi.fn().mockResolvedValue(["foo"]),
+        getLiveStreams: vi.fn().mockResolvedValue([stream("foo")]),
+        getArchiveVideoId,
+      };
+    }
+
+    it("見つかった VOD を join に添え、以降の同期では引き直さない", async () => {
+      const getVod = vi.fn().mockResolvedValue("v1");
+      const { monitor, joined } = fakeMonitor();
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+
+      await sync.sync();
+      await sync.sync();
+
+      expect(getVod).toHaveBeenCalledTimes(1);
+      expect(getVod).toHaveBeenCalledWith("cid", "tok", "id-foo", "s-foo");
+      expect(joined.map((j) => j.stream?.vodId)).toEqual(["v1", "v1"]);
+    });
+
+    it("見つからなければ vodId=null で join し、次の同期で引き直す", async () => {
+      const getVod = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("v1");
+      const { monitor, joined } = fakeMonitor();
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+
+      await sync.sync();
+      await sync.sync();
+
+      expect(joined.map((j) => j.stream?.vodId)).toEqual([null, "v1"]);
+    });
+
+    it("VOD の取得に失敗しても join は行う（VOD なし）", async () => {
+      const getVod = vi.fn().mockRejectedValue(new Error("Twitch API 500"));
+      const { monitor, joined } = fakeMonitor();
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+
+      await sync.sync();
+
+      expect(joined).toEqual([
+        { channel: "foo", title: "T", stream: { streamId: "s-foo", startedAt: 1000, vodId: null } },
+      ]);
+    });
   });
 });

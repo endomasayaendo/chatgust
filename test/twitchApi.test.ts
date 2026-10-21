@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+  getArchiveVideoId,
   getCurrentUser,
   getFollowedChannels,
   getLiveStreams,
@@ -16,6 +17,18 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     json: async () => body,
     text: async () => JSON.stringify(body),
+  };
+}
+
+/** Helix streams の1件（必要なフィールドのみ）。 */
+function liveStream(login: string, title: string, viewers: number) {
+  return {
+    id: `stream-${login}`,
+    user_id: `id-${login}`,
+    user_login: login,
+    title,
+    viewer_count: viewers,
+    started_at: "2026-10-21T12:00:00Z",
   };
 }
 
@@ -87,10 +100,10 @@ describe("getLiveStreams", () => {
     const logins = Array.from({ length: 150 }, (_, i) => `u${i}`);
     fetchMock
       .mockResolvedValueOnce(
-        jsonResponse({ data: [{ user_login: "u0", title: "T0", viewer_count: 10 }] })
+        jsonResponse({ data: [liveStream("u0", "T0", 10)] })
       )
       .mockResolvedValueOnce(
-        jsonResponse({ data: [{ user_login: "u100", title: "T100", viewer_count: 20 }] })
+        jsonResponse({ data: [liveStream("u100", "T100", 20)] })
       );
 
     const result = await getLiveStreams(CLIENT_ID, TOKEN, logins);
@@ -100,10 +113,46 @@ describe("getLiveStreams", () => {
     const firstUrl = fetchMock.mock.calls[0][0] as string;
     expect((firstUrl.match(/user_login=/g) ?? []).length).toBe(100);
 
-    expect(result).toEqual([
-      { login: "u0", title: "T0", viewerCount: 10 },
-      { login: "u100", title: "T100", viewerCount: 20 },
-    ]);
+    expect(result.map((s) => s.login)).toEqual(["u0", "u100"]);
+  });
+
+  it("VOD リンク用に stream id・user id・配信開始時刻（ミリ秒）を取り出す", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [liveStream("u0", "T0", 10)] }));
+
+    const [s] = await getLiveStreams(CLIENT_ID, TOKEN, ["u0"]);
+
+    expect(s).toEqual({
+      login: "u0",
+      title: "T0",
+      viewerCount: 10,
+      userId: "id-u0",
+      streamId: "stream-u0",
+      startedAt: Date.UTC(2026, 9, 21, 12, 0, 0),
+    });
+  });
+});
+
+describe("getArchiveVideoId", () => {
+  it("アーカイブ VOD のうち stream_id が一致するものの id を返す", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: [
+          { id: "v2", stream_id: "s2" },
+          { id: "v1", stream_id: "s1" },
+        ],
+      })
+    );
+
+    expect(await getArchiveVideoId(CLIENT_ID, TOKEN, "uid", "s1")).toBe("v1");
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.pathname).toBe("/helix/videos");
+    expect(url.searchParams.get("user_id")).toBe("uid");
+    expect(url.searchParams.get("type")).toBe("archive");
+  });
+
+  it("一致する VOD が無ければ null（VOD を保存しないチャンネル）", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [{ id: "v9", stream_id: "old" }] }));
+    expect(await getArchiveVideoId(CLIENT_ID, TOKEN, "uid", "s1")).toBeNull();
   });
 });
 

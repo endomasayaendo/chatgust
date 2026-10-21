@@ -1,4 +1,5 @@
 import type { Notifier } from "./notifier.js";
+import { vodLinkForWindow, type StreamRef } from "./vod.js";
 
 export interface RecentAlert {
   channel: string;
@@ -24,7 +25,13 @@ export class AlertDispatcher {
   ) {}
 
   /** クールダウン経過後のみ、履歴を記録して通知を送る。 */
-  dispatch(channel: string, rate: number, baseline: number, title: string): void {
+  dispatch(
+    channel: string,
+    rate: number,
+    baseline: number,
+    title: string,
+    stream?: StreamRef
+  ): void {
     const last = this.cooldowns.get(channel) ?? 0;
     if (this.now() - last < this.cooldownMs) return;
     this.cooldowns.set(channel, this.now());
@@ -37,7 +44,14 @@ export class AlertDispatcher {
     console.log(`[alert] ${channel}: ${rate} msg/30s (${mult}x baseline)`);
 
     this.notifier
-      .send({ channel, title, rate, baseline, streamUrl: `https://twitch.tv/${channel}` })
+      .send({
+        channel,
+        title,
+        rate,
+        baseline,
+        streamUrl: `https://twitch.tv/${channel}`,
+        vodUrl: vodLinkForWindow(stream, this.now()),
+      })
       .catch((err: Error) => console.error("[notifier]", err.message));
   }
 
