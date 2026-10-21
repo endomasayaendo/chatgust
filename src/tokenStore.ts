@@ -8,10 +8,7 @@ type RefreshFn = (
   refreshToken: string
 ) => Promise<{ accessToken: string; refreshToken: string }>;
 
-/**
- * StreamSync が使うアクセストークンの取得元。
- * `accessToken` が空なら未取得で、`refresh()` で取得（失効時は取り直し）する。
- */
+/** StreamSync が使うアクセストークンの取得元。失効（401）したら `refresh()` で取り直す。 */
 export interface AccessTokenSource {
   readonly accessToken: string;
   refresh(): Promise<void>;
@@ -70,6 +67,7 @@ export class TokenStore implements AccessTokenSource {
 
 /**
  * client credentials で取得するアプリアクセストークンを保持する（NOTIFY_CHANNELS 指定時の認証なしモード用）。
+ * 生成直後は空なので、使う前に `refresh()` で取得する（index.ts が起動時に行う）。
  * Client ID / Secret があればいつでも取り直せるので、`.env` には永続化しない。
  */
 export class AppTokenStore implements AccessTokenSource {

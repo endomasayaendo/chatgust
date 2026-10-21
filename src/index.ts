@@ -37,16 +37,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, "../.env");
 
 // --- 依存の生成と配線（composition root） ---
-const tokenStore: AccessTokenSource =
-  config.authMode === "app"
-    ? new AppTokenStore(config.twitchClientId, config.twitchClientSecret)
-    : new TokenStore(
-        config.twitchClientId,
-        config.twitchClientSecret,
-        ENV_PATH,
-        config.accessToken,
-        config.refreshToken
-      );
+let tokenStore: AccessTokenSource;
+if (config.authMode === "app") {
+  const appTokens = new AppTokenStore(config.twitchClientId, config.twitchClientSecret);
+  // 起動時に一度取得する。Client Secret の誤りなどで取れないまま、何も監視せずに動き続けないよう終了する。
+  try {
+    await appTokens.refresh();
+  } catch (err) {
+    console.error(`[auth] Failed to get app access token: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  tokenStore = appTokens;
+} else {
+  tokenStore = new TokenStore(
+    config.twitchClientId,
+    config.twitchClientSecret,
+    ENV_PATH,
+    config.accessToken,
+    config.refreshToken
+  );
+}
 
 const notifier = new DiscordNotifier(config.discordWebhookUrl);
 const dispatcher = new AlertDispatcher(notifier, config.cooldownMin * 60 * 1000);

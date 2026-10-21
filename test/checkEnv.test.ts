@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkRequired, hasNotifyChannels, hasTokens } from "../scripts/checkEnv.js";
+import { authModeOf, checkRequired } from "../scripts/checkEnv.js";
 
 const example = {
   TWITCH_CLIENT_ID: "your_client_id_here",
@@ -39,19 +39,16 @@ describe("checkRequired", () => {
   });
 });
 
-describe("hasTokens", () => {
-  it("アクセストークンとリフレッシュトークンが両方あるときだけ true", () => {
-    expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "r" })).toBe(true);
-    expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "" })).toBe(false);
-    expect(hasTokens({})).toBe(false);
+describe("authModeOf", () => {
+  it("アプリ本体と同じく、アクセストークンの有無で user モードを判定する", () => {
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "r" })).toBe("user");
+    // リフレッシュトークンが空でもアプリは user モードで起動するので、app と案内しない
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "", NOTIFY_CHANNELS: "foo" })).toBe("user");
   });
-});
 
-describe("hasNotifyChannels", () => {
-  it("NOTIFY_CHANNELS に1つ以上のチャンネルがあるときだけ true", () => {
-    expect(hasNotifyChannels({ NOTIFY_CHANNELS: "foo,bar" })).toBe(true);
-    expect(hasNotifyChannels({ NOTIFY_CHANNELS: " , " })).toBe(false);
-    expect(hasNotifyChannels({ NOTIFY_CHANNELS: "" })).toBe(false);
-    expect(hasNotifyChannels({})).toBe(false);
+  it("トークンが無ければ NOTIFY_CHANNELS の有無で app / 要ログインを分ける", () => {
+    expect(authModeOf({ TWITCH_ACCESS_TOKEN: "", NOTIFY_CHANNELS: "foo,bar" })).toBe("app");
+    expect(authModeOf({ NOTIFY_CHANNELS: " , " })).toBeUndefined();
+    expect(authModeOf({})).toBeUndefined();
   });
 });

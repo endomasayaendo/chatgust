@@ -8,6 +8,18 @@ import { parseAllowlist } from "./notifyFilter.js";
 export type AuthMode = "user" | "app";
 
 /**
+ * 認証方式を決める。ユーザートークンがあれば user、無くても監視対象を直接指定していれば app。
+ * どちらも無ければ undefined（`npm run auth` が必要）。`make setup` の案内もこの判定を使う。
+ */
+export function resolveAuthMode(
+  accessToken: string | undefined,
+  notifyChannels: Set<string>
+): AuthMode | undefined {
+  if (accessToken) return "user";
+  return notifyChannels.size > 0 ? "app" : undefined;
+}
+
+/**
  * アプリ全体で参照する、型付きの実行時設定。
  * 認証情報・通知設定・検知パラメータなど、環境変数由来の値をまとめて保持する。
  */
@@ -70,17 +82,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
-  // ユーザートークンがあれば従来どおり。無くても監視対象を直接指定していればログイン不要で動かせる。
-  const authMode: AuthMode = accessToken ? "user" : "app";
-  if (authMode === "app") {
-    if (notifyChannels.size === 0) {
-      throw new Error(
-        "Missing Twitch login. Run `make auth` (or `npm run auth`), or set NOTIFY_CHANNELS to monitor specific channels without login."
-      );
-    }
-    if (!TWITCH_CLIENT_SECRET) {
-      throw new Error("TWITCH_CLIENT_SECRET is required to run without login (NOTIFY_CHANNELS mode).");
-    }
+  const authMode = resolveAuthMode(accessToken, notifyChannels);
+  if (!authMode) {
+    throw new Error(
+      "Missing Twitch login. Run `make auth` (or `npm run auth`), or set NOTIFY_CHANNELS to monitor specific channels without login."
+    );
+  }
+  if (authMode === "app" && !TWITCH_CLIENT_SECRET) {
+    throw new Error("TWITCH_CLIENT_SECRET is required to run without login (NOTIFY_CHANNELS mode).");
   }
 
   return {

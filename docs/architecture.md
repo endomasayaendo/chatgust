@@ -149,4 +149,4 @@ sequenceDiagram
 - **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。
   - 不変条件: **`this.ws` は生きている接続だけを指し、未接続なら `null`**。`close` で必ず `null` に戻す。閉じたソケットを保持すると `join()` が「接続済み」と誤認し、二度と再接続されない（過去にこれで全レポートの流速が 0 になった）。
   - 監視対象が 0 の間は接続を張り直さず、次の `join()` で張る。「接続なし」は正常な状態のひとつ。
-- **自己修復** — トークン失効(401)を検知したら `tokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。app モードの `AppTokenStore` は client credentials で取り直すだけ（`.env` には書かない）。IRC も切断を検知したら 10 秒後に再接続し、ハンドシェイクが固まった場合も `handshakeTimeout` で必ず `close` → 再接続経路に乗る（沈黙したまま止まらない）。
+- **自己修復** — トークン失効(401)を検知したら `tokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。app モードの `AppTokenStore` は client credentials で取り直すだけ（`.env` には書かない）。なお app モードは起動時に一度トークンを取得し、取れなければ（Client Secret の誤りなど）`process.exit(1)` する（何も監視しないまま動き続けないように）。IRC も切断を検知したら 10 秒後に再接続し、ハンドシェイクが固まった場合も `handshakeTimeout` で必ず `close` → 再接続経路に乗る（沈黙したまま止まらない）。

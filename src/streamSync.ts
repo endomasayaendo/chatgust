@@ -47,7 +47,6 @@ export class StreamSync {
 
   async sync(): Promise<void> {
     try {
-      if (!this.tokenStore.accessToken) await this.tokenStore.refresh(); // app モードの初回取得
       const token = this.tokenStore.accessToken;
       const targets = await this.resolveTargets(token);
       const live = await this.api.getLiveStreams(this.clientId, token, targets);
