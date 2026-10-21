@@ -1,12 +1,14 @@
 import { RateDetector, type SpikeDetector } from "./rateDetector.js";
 import { IrcClient } from "./ircClient.js";
 import { ConsecutiveSpikePolicy, type SpikePolicy } from "./spikePolicy.js";
+import type { StreamRef } from "./vod.js";
 
 export type AlertCallback = (
   channel: string,
   rate: number,
   baseline: number,
-  title: string
+  title: string,
+  stream?: StreamRef
 ) => void;
 
 export interface DetectorConfig {
@@ -21,10 +23,12 @@ export interface DetectorConfig {
  * 振り返り機能はこれを実装して「ためて見せる」責務を担う（通知系とは別系統）。
  */
 export interface SessionObserver {
-  onJoin(channel: string, title: string): void;
+  onJoin(channel: string, title: string, stream?: StreamRef): void;
   onSample(channel: string, rate: number): void;
   /** 配信中にタイトルが変わったときに呼ばれる。 */
   onTitleChange(channel: string, title: string): void;
+  /** join 後に配信のアーカイブ VOD が見つかったときに呼ばれる。 */
+  onVodFound(channel: string, vodId: string): void;
   onPart(channel: string): void;
 }
 
@@ -33,6 +37,7 @@ const NOOP_OBSERVER: SessionObserver = {
   onJoin() {},
   onSample() {},
   onTitleChange() {},
+  onVodFound() {},
   onPart() {},
 };
 
@@ -47,6 +52,7 @@ export interface ChatMonitorDeps {
 interface ChannelState {
   detector: SpikeDetector;
   title: string;
+  stream?: StreamRef;
 }
 
 const CHECK_INTERVAL_MS = 5_000;
@@ -99,26 +105,46 @@ export class ChatMonitor {
         this.notifyObserver("onSample", () => this.observer.onSample(channel, rate));
         const isSpike = state.detector.isSpike(spikeThreshold, minRate, spikeZ);
         if (this.policy.confirm(channel, isSpike)) {
-          this.onAlert(channel, rate, state.detector.getBaseline(), state.title);
+          this.onAlert(channel, rate, state.detector.getBaseline(), state.title, state.stream);
         }
       }
     }, CHECK_INTERVAL_MS);
   }
 
-  join(channel: string, title: string): void {
+  /**
+   * チャンネルの監視を始める。監視中のチャンネルに対して呼ぶと、タイトルや VOD の変化を反映する
+   * （定期同期は毎回 join を呼ぶ）。stream は VOD リンク用の配信情報で、無ければリンクを出さない。
+   */
+  join(channel: string, title: string, stream?: StreamRef): void {
     // 破棄後の join（終了処理中に完了した同期など）で、IRC 接続や検知ループを復活させない。
     if (this.destroyed) return;
     const existing = this.channels.get(channel);
     if (existing) {
+      // 同期間隔より短い間に配信し直すと、part を挟まずに別の配信（streamId 違い）が来る。
+      // 古い配信の VOD・開始時刻でリンクを作らないよう、記録上は別セッションに切り替える。
+      // チャットは同じなので、IRC 接続と検知器（ベースライン）はそのまま引き継ぐ。
+      if (existing.stream && stream && stream.streamId !== existing.stream.streamId) {
+        existing.title = title;
+        existing.stream = stream;
+        this.notifyObserver("onPart", () => this.observer.onPart(channel));
+        this.notifyObserver("onJoin", () => this.observer.onJoin(channel, title, stream));
+        console.log(`[IRC] #${channel} started a new stream`);
+        return;
+      }
       if (existing.title !== title) {
         existing.title = title;
         this.notifyObserver("onTitleChange", () => this.observer.onTitleChange(channel, title));
       }
+      const vodId = stream?.vodId;
+      if (existing.stream && vodId && existing.stream.vodId !== vodId) {
+        existing.stream = { ...existing.stream, vodId };
+        this.notifyObserver("onVodFound", () => this.observer.onVodFound(channel, vodId));
+      }
       return;
     }
-    this.channels.set(channel, { detector: this.detectorFactory(), title });
+    this.channels.set(channel, { detector: this.detectorFactory(), title, stream });
     this.irc.join(channel);
-    this.notifyObserver("onJoin", () => this.observer.onJoin(channel, title));
+    this.notifyObserver("onJoin", () => this.observer.onJoin(channel, title, stream));
     this.startTimer();
     console.log(`[IRC] Joined #${channel}`);
   }

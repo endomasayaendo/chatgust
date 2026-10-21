@@ -31,5 +31,26 @@ export function openDb(dbPath: string): Db {
     );
     CREATE INDEX IF NOT EXISTS idx_samples_session ON samples(session_id);
   `);
+  migrate(db);
   return db;
+}
+
+/**
+ * 後から追加した sessions の列。CREATE TABLE IF NOT EXISTS は既存の表に列を足さないため、
+ * 新規 DB も既存 DB も、無い列だけを ALTER TABLE で追加して同じスキーマにそろえる。
+ * 既存行は NULL（＝配信情報不明。VOD リンクを出さない）になる。
+ */
+const SESSION_COLUMNS: [name: string, type: string][] = [
+  ["stream_id", "TEXT"],
+  ["stream_started_at", "INTEGER"],
+  ["vod_id", "TEXT"],
+];
+
+function migrate(db: Db): void {
+  const existing = new Set(
+    (db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const [name, type] of SESSION_COLUMNS) {
+    if (!existing.has(name)) db.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${type}`);
+  }
 }

@@ -94,3 +94,25 @@ describe("AlertDispatcher", () => {
     expect(console.error).toHaveBeenCalled();
   });
 });
+
+describe("AlertDispatcher の VOD リンク", () => {
+  it("配信の VOD があれば、発火時刻から窓幅ぶん手前を指すリンクを付ける", () => {
+    const { notifier, sent } = fakeNotifier();
+    // 配信開始 0、発火 3_600_000（1時間）→ 59分30秒
+    const d = new AlertDispatcher(notifier, 1000, () => 3_600_000);
+
+    d.dispatch("foo", 40, 5, "t", { streamId: "s1", startedAt: 0, vodId: "v1" });
+
+    expect(sent[0].vodUrl).toBe("https://www.twitch.tv/videos/v1?t=0h59m30s");
+  });
+
+  it("VOD が無ければリンクを付けずに通知する", () => {
+    const { notifier, sent } = fakeNotifier();
+    const d = new AlertDispatcher(notifier, 1000, () => 10_000);
+
+    d.dispatch("foo", 40, 5, "t", { streamId: "s1", startedAt: 0, vodId: null });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].vodUrl).toBeUndefined();
+  });
+});

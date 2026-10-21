@@ -1,5 +1,6 @@
 import { Cooldown } from "./cooldown.js";
 import type { Notifier } from "./notifier.js";
+import { vodLinkForWindow, type StreamRef } from "./vod.js";
 
 export interface RecentAlert {
   channel: string;
@@ -21,13 +22,19 @@ export class AlertDispatcher {
   constructor(
     private readonly notifier: Notifier,
     cooldownMs: number,
-    now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now()
   ) {
     this.cooldown = new Cooldown(cooldownMs, now);
   }
 
   /** クールダウン経過後のみ、履歴を記録して通知を送る。 */
-  dispatch(channel: string, rate: number, baseline: number, title: string): void {
+  dispatch(
+    channel: string,
+    rate: number,
+    baseline: number,
+    title: string,
+    stream?: StreamRef
+  ): void {
     if (!this.cooldown.tryAcquire(channel)) return;
 
     const entry: RecentAlert = { channel, rate, baseline, at: new Date().toISOString() };
@@ -38,7 +45,14 @@ export class AlertDispatcher {
     console.log(`[alert] ${channel}: ${rate} msg/30s (${mult}x baseline)`);
 
     this.notifier
-      .send({ channel, title, rate, baseline, streamUrl: `https://twitch.tv/${channel}` })
+      .send({
+        channel,
+        title,
+        rate,
+        baseline,
+        streamUrl: `https://twitch.tv/${channel}`,
+        vodUrl: vodLinkForWindow(stream, this.now()),
+      })
       .catch((err: Error) => console.error("[notifier]", err.message));
   }
 

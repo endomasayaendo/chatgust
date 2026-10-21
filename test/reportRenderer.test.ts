@@ -8,6 +8,7 @@ const base: SessionWithSamples = {
   title: "PUBG ランク",
   startedAt: 1_700_000_000_000,
   endedAt: 1_700_000_000_000 + 3_600_000, // 1時間
+  stream: null,
   samples: [
     { t: 0, rate: 2 },
     { t: 300_000, rate: 15 },
@@ -82,5 +83,27 @@ describe("renderHtml", () => {
     const html = renderHtml({ ...base, samples: [{ t: 0, rate: 5 }] });
     expect(html).toContain("<circle");
     expect(html).not.toContain("<polyline");
+  });
+});
+
+describe("renderHtml の VOD リンク", () => {
+  it("VOD があれば、盛り上がった場面ごとに窓の始まりを指すリンクを出す", () => {
+    // 配信開始は ChatGust の join の 10分前。ピーク t=600_000（join から10分）は配信開始から20分。
+    const html = renderHtml({
+      ...base,
+      stream: { streamId: "s1", startedAt: base.startedAt - 600_000, vodId: "v1" },
+    });
+    expect(html).toContain("盛り上がった場面を VOD で見る");
+    // 20分00秒 − 窓幅30秒 = 19分30秒
+    expect(html).toContain('href="https://www.twitch.tv/videos/v1?t=0h19m30s"');
+  });
+
+  it("VOD が無ければリンク欄を出さない", () => {
+    expect(renderHtml(base)).not.toContain("twitch.tv/videos");
+    const noVod = renderHtml({
+      ...base,
+      stream: { streamId: "s1", startedAt: base.startedAt, vodId: null },
+    });
+    expect(noVod).not.toContain("VOD で見る");
   });
 });

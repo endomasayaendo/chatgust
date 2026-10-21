@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   ConsoleNotifier,
   DiscordNotifier,
+  buildReportPayload,
   createNotifier,
   sendDiscordAlert,
   sendDiscordReport,
 } from "../src/notifier.js";
+import type { FinishedSession } from "../src/timelineRecorder.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/abc/xyz";
 
@@ -179,6 +181,61 @@ describe("sendDiscordReport", () => {
   });
 });
 
+describe("VOD リンク", () => {
+  it("アラート embed に VOD リンクがあれば添え、無ければ配信リンクだけにする", async () => {
+    const alert = {
+      channel: "shroud",
+      title: "PUBG",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/shroud",
+    };
+    await sendDiscordAlert(WEBHOOK, { ...alert, vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s" });
+    expect(lastPayload().embeds[0].description).toContain(
+      "[この場面を VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m0s)"
+    );
+
+    fetchMock.mockClear();
+    await sendDiscordAlert(WEBHOOK, alert);
+    expect(lastPayload().embeds[0].description).not.toContain("VOD");
+  });
+
+  it("レポート embed のピーク流速に VOD リンクを添える", async () => {
+    await sendDiscordReport(WEBHOOK, {
+      channel: "shroud",
+      title: "PUBG",
+      url: "https://chatgust.fly.dev/reports/abc123",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s",
+    });
+    const peakField = lastPayload().embeds[0].fields.find(
+      (f: { name: string }) => f.name === "ピーク流速"
+    );
+    expect(peakField.value).toBe("40 件/30秒（[VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m0s)）");
+  });
+
+  it("buildReportPayload はピーク時刻と配信開始から VOD リンクを組み立てる", () => {
+    const session: FinishedSession = {
+      id: "abc123",
+      channel: "shroud",
+      title: "PUBG",
+      startedAt: 600_000,
+      endedAt: 3_600_000,
+      peakRate: 40,
+      peakAt: 1_230_000, // 配信開始から 20分30秒 → 窓の始まりは 20分00秒
+      endReason: "streamEnded",
+      stream: { streamId: "s1", startedAt: 0, vodId: "v1" },
+    };
+    expect(buildReportPayload(session, "https://x").peakVodUrl).toBe(
+      "https://www.twitch.tv/videos/v1?t=0h20m0s"
+    );
+    expect(buildReportPayload({ ...session, stream: null }, "https://x").peakVodUrl).toBeUndefined();
+    expect(buildReportPayload({ ...session, peakAt: null }, "https://x").peakVodUrl).toBeUndefined();
+  });
+});
+
 describe("ConsoleNotifier", () => {
   function logged(): string {
     return vi.mocked(console.log).mock.calls.map((args) => args.join(" ")).join("\n");
@@ -204,6 +261,32 @@ describe("ConsoleNotifier", () => {
     expect(out).toContain("40");
     expect(out).toContain("8.0倍");
     expect(out).toContain("https://twitch.tv/foo");
+    expect(out).not.toContain("VOD");
+  });
+
+  it("VOD リンクがあればアラート・レポートとも一緒に出す", async () => {
+    const notifier = new ConsoleNotifier();
+    await notifier.send({
+      channel: "foo",
+      title: "t",
+      rate: 40,
+      baseline: 5,
+      streamUrl: "https://twitch.tv/foo",
+      vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s",
+    });
+    await notifier.sendReport({
+      channel: "foo",
+      title: "t",
+      url: "https://x/reports/1",
+      durationMin: 83,
+      peakRate: 40,
+      endReason: "streamEnded",
+      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h20m0s",
+    });
+
+    const out = logged();
+    expect(out).toContain("VOD: https://www.twitch.tv/videos/v1?t=0h10m0s");
+    expect(out).toContain("ピークの VOD: https://www.twitch.tv/videos/v1?t=0h20m0s");
   });
 
   it("振り返りレポートの内容をコンソールに出し、Discord には送らない", async () => {
@@ -218,6 +301,7 @@ describe("ConsoleNotifier", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     const out = logged();
+    expect(out).not.toContain("VOD");
     expect(out).toContain("shroud の配信が終了");
     expect(out).toContain("PUBG ランク");
     expect(out).toContain("配信時間 83 分");

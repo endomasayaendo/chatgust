@@ -22,8 +22,8 @@ flowchart TD
     end
 
     C --> D{{"同期ループ · 60秒ごと<br/>streamSync.sync()"}}
-    D --> E["Twitch API: フォロー中 → 許可リスト絞り込み<br/>（app モードは許可リストそのまま）<br/>→ ライブ配信を取得"]
-    E --> F["live ごとに monitor.join(login, title)<br/>ライブ外は monitor.part()"]
+    D --> E["Twitch API: フォロー中 → 許可リスト絞り込み<br/>（app モードは許可リストそのまま）<br/>→ ライブ配信を取得 → 未解決の配信だけアーカイブ VOD を取得"]
+    E --> F["live ごとに monitor.join(login, title, stream)<br/>ライブ外は monitor.part()"]
 
     F --> G["channels Map に登録<br/>+ IRC へ JOIN + 検知タイマー起動（1本のみ）<br/>+ observer.onJoin（セッション開始）"]
 
@@ -67,9 +67,9 @@ sequenceDiagram
     IDX->>SS: sync() 初回 + setInterval(60s)
 
     loop 同期 · 60秒ごと
-        SS->>API: getFollowed / getLiveStreams()
-        API-->>SS: live: { login, title }[]
-        SS->>CM: join(login, title)  ← channel/title の源流
+        SS->>API: getFollowed / getLiveStreams() / getArchiveVideoId()
+        API-->>SS: live: { login, title, streamId, startedAt }[] + VOD id
+        SS->>CM: join(login, title, stream)  ← channel/title/配信情報の源流
         CM->>IRC: join → WebSocket JOIN
         CM->>TR: onJoin → startSession（セッション開始）
     end
@@ -87,7 +87,7 @@ sequenceDiagram
         CM->>SP: confirm(channel, isSpike)
         SP-->>CM: 発火可否（2回連続で true）
         alt 発火が確定した場合
-            CM->>AD: onAlert → dispatch(channel, rate, baseline, title)
+            CM->>AD: onAlert → dispatch(channel, rate, baseline, title, stream)
             AD->>AD: cooldown 判定 + 履歴を記録
             AD->>DC: send() Webhook POST（アラート）
         end
@@ -108,9 +108,9 @@ sequenceDiagram
 | # | 処理 | 位置 |
 | --- | --- | --- |
 | 1 | listen 成功後に初回 sync、以降 60 秒間隔で登録 | `index.ts` app.listen コールバック → `StreamSync.sync()` + `setInterval` |
-| 2 | フォロー中 → 許可リスト絞り込み → ライブ取得（app モードはフォロー一覧を取らず `NOTIFY_CHANNELS` をそのまま使う） | `StreamSync.sync()`（`resolveTargets()`: `getFollowedChannels` → `filterChannels`、→ `getLiveStreams`） |
-| 3 | 戻り値 `Stream[]`（login・title を含む） | `TwitchApi.getLiveStreams()` |
-| 4 | `monitor.join(stream.login, stream.title)` | `StreamSync.sync()` → `ChatMonitor.join()` |
+| 2 | フォロー中 → 許可リスト絞り込み → ライブ取得 → VOD 取得（app モードはフォロー一覧を取らず `NOTIFY_CHANNELS` をそのまま使う） | `StreamSync.sync()`（`resolveTargets()`: `getFollowedChannels` → `filterChannels`、→ `getLiveStreams` → `resolveVods()` → `getArchiveVideoId`） |
+| 3 | 戻り値 `Stream[]`（login・title・streamId・userId・配信開始時刻）と VOD id | `TwitchApi.getLiveStreams()` / `getArchiveVideoId()` |
+| 4 | `monitor.join(login, title, { streamId, startedAt, vodId })` | `StreamSync.sync()` → `ChatMonitor.join()` |
 | 5 | IRC へ JOIN | `ChatMonitor.join()` → `IrcClient.join()` |
 | 6 | `onJoin` でセッション開始 | `ChatMonitor.join()` → `TimelineRecorder.onJoin()` → `repo.startSession()` |
 | 7 | PRIVMSG をパースし `onMessage(channel)` | `IrcClient`（受信フレームを `\r\n` で行に分割 → 行ごとに PING 応答／PRIVMSG パース → `onMessage`。Twitch は複数行を 1 フレームにまとめて送るため、フレーム単位で数えると流速を過小計上する） |
@@ -123,15 +123,17 @@ sequenceDiagram
 | 14 | `isSpike && prev`（2 回連続で true） | `ConsecutiveSpikePolicy.confirm()` |
 | 15 | コールバック経由で dispatch | `ChatMonitor` tick → `onAlert`（index.ts で配線）→ `AlertDispatcher.dispatch()` |
 | 16 | cooldown 通過時のみ履歴記録 | `AlertDispatcher.dispatch()` |
-| 17 | Discord embed を送信（アラート） | `AlertDispatcher.dispatch()` → `DiscordNotifier.send()` → `sendDiscordAlert()` |
+| 17 | Discord embed を送信（アラート。VOD があれば盛り上がり始めへのリンク付き） | `AlertDispatcher.dispatch()` → `DiscordNotifier.send()` → `sendDiscordAlert()` |
 | 18 | ライブでなくなった配信を part | `StreamSync.sync()` → `ChatMonitor.part()` |
 | 19 | `onPart` でセッション確定 | `ChatMonitor.part()` → `TimelineRecorder.onPart()` |
 | 20 | 終了時刻を DB に記録 | `TimelineRecorder.onPart()` → `SqliteTimelineRepository.endSession()` |
-| 21 | Discord へ振り返りリンクを送信 | `TimelineRecorder.onPart()` → `reportSink`（index.ts で配線）→ `DiscordNotifier.sendReport()` → `sendDiscordReport()` |
+| 21 | Discord へ振り返りリンクを送信（VOD があればピークへのリンク付き） | `TimelineRecorder.onPart()` → `reportSink`（index.ts で配線）→ `DiscordNotifier.sendReport()` → `sendDiscordReport()` |
 
 ### シーケンス図の常時ループ外（起動時・改名・閲覧リクエスト時）
 - 起動時に、前回異常終了で残った未終了セッションを確定 … `index.ts`（起動時）→ `SqliteTimelineRepository.closeDangling()`
 - 配信中の改名（同期で同じチャンネルを再 join したとき）… `ChatMonitor.join()`（既存分岐・title 変化時のみ `onTitleChange`）→ `TimelineRecorder.onTitleChange()` → `repo.updateTitle()`
+- 同期間隔より短い間に配信し直した（part を挟まずに同じチャンネルで streamId が変わった）… `ChatMonitor.join()`（既存分岐）が `onPart` → `onJoin` で記録を別セッションに切り替える。古い配信の VOD・開始時刻でリンクを作らないため。チャットは同じなので IRC 接続と検知器はそのまま引き継ぐ
+- 配信中に VOD が見つかった（join 時は未作成で、後の同期で見つかった）… `ChatMonitor.join()`（既存分岐・同じ streamId で vodId が変化したときのみ `onVodFound`）→ `TimelineRecorder.onVodFound()` → `repo.updateVodId()`
 - `/reports/:id` … DB から波形HTMLを描画して配信（Discordリンク／ブラウザの着地点） … `server.ts` の `GET /reports/:id` → `repo.getSession()` → `renderHtml()`
 - `/api/reports`（一覧）/ `/api/reports/:id`（JSON） … `server.ts` の `GET /api/reports` / `GET /api/reports/:id`
 - プロセス終了（SIGINT / SIGTERM）… `index.ts` の `shutdown()` → `ChatMonitor.destroy()` → `TimelineRecorder.finishAll()`（稼働中セッションを `endReason: "shutdown"` で確定）→ `db.close()` → レポート送信を最大 4 秒待って終了
@@ -139,11 +141,15 @@ sequenceDiagram
 ## 設計メモ
 
 - **fail-fast の集約** — 設定不正で終了するのは `loadConfig()` の 1 か所だけ。以降の部品は「設定は正しい」前提で書ける。
-- **依存性逆転** — `ChatMonitor` は `Dispatcher` を直接知らず `onAlert` コールバック経由で疎結合。振り返りも同様に、`ChatMonitor` は極小の `SessionObserver`（`onJoin/onSample/onTitleChange/onPart`）だけに依存し、記録先・保存方式・Discord 通知は `TimelineRecorder` 側で完結する。通知系と振り返り系が混ざらない。
+- **依存性逆転** — `ChatMonitor` は `Dispatcher` を直接知らず `onAlert` コールバック経由で疎結合。振り返りも同様に、`ChatMonitor` は極小の `SessionObserver`（`onJoin/onSample/onTitleChange/onVodFound/onPart`）だけに依存し、記録先・保存方式・Discord 通知は `TimelineRecorder` 側で完結する。通知系と振り返り系が混ざらない。
 - **記録の例外は隔離する** — 観察者呼び出しは `chatMonitor` の `notifyObserver()` が try/catch で包み、記録側（DB書き込み等）で例外が出ても検知・通知を巻き添えにしない。同じ理由で `IrcClient` も `onMessage` 呼び出しを try/catch で包む（1行の処理失敗で受信フレームごと落とさない）。加えて `index.ts` に `uncaughtException`/`unhandledRejection` の最後の砦を置き、一過性の例外で常駐ボットが落ちないようにする。
 - **タイマーは常に 1 本** — `chatMonitor` の `if (this.timer) return` が検知ループの二重起動を防ぐ。`IrcClient` の再接続タイマーも同様に 1 本だけで、`destroy()` が必ず `clearTimeout` する（残すと破棄後に接続が復活する）。
 - **配信規模に依存しない検知** — 「平均 + ばらつき(σ)」の z スコアで判定し、小規模〜大手まで同じ基準で効く（`RateDetector.isSpike()`）。
 - **終了時に配信中のセッションを確定して送る** — SIGINT（Fly.io の既定）と SIGTERM（`docker stop` 等）を同じ `shutdown()` に通す。`monitor.destroy()` は監視を止めるだけで `onPart` を呼ばないため、`TimelineRecorder.finishAll()` で稼働中セッションを明示的に確定し、レポートを送る。配信が終わったわけではないので、通知は「再起動のため途中まで」と配信終了とは区別する。Fly の `kill_timeout`（既定 5 秒）より先に終わるよう、送信の待ちは 4 秒で打ち切る。再起動をまたいだ同一配信のセッション再開は #20。
+- **VOD タイムスタンプリンク** — アラートとレポートに、Twitch VOD の該当位置へ飛ぶリンク（`?t=1h2m3s`）を付ける（`vod.ts`）。
+  - オフセットの起点は Twitch 上の**配信開始時刻**（`streams.started_at`）。`sessions.started_at` は ChatGust が join した時刻なので使わない。配信情報は `sessions.stream_id` / `stream_started_at` / `vod_id` に保存する（列は `openDb()` の `migrate()` が既存 DB にも追加する。追加前の行は NULL＝リンクなし）。
+  - 流速は直近 30 秒窓の件数なので、発火時刻・ピークのサンプル時刻から**窓幅ぶん手前**を指す（`vodLinkForWindow()`）。
+  - VOD は `GET /videos?type=archive` の `stream_id` 照合で特定する。アラート時に引くと通知が遅れるため、同期ループで先回りして解決する（join/part を先に済ませてから引き、見つかった分は join し直して `onVodFound` で反映。応答待ちで監視開始を遅らせない）。見つかるまで同期ごとに引き直す（VOD を保存しないチャンネルでは配信中ずっと、1 配信あたり 1 分に 1 回）。取得失敗はログのみで、join・通知は止めない。
 - **逐次永続化でクラッシュ耐性** — 流速は 5 秒ごとに即 SQLite へ INSERT（WAL）。プロセスが落ちても直近数秒しか失われず、起動時 `closeDangling` が未終了セッションを確定する。
 - **URL の秘匿** — レポート id はランダムな 12 桁 hex（連番の列挙による覗き見を防ぐ）。
 - **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。

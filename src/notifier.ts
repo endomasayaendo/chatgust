@@ -1,4 +1,5 @@
 import type { EndReason, FinishedSession } from "./timelineRecorder.js";
+import { vodLinkForWindow } from "./vod.js";
 
 export interface AlertPayload {
   channel: string;
@@ -6,6 +7,8 @@ export interface AlertPayload {
   rate: number;
   baseline: number;
   streamUrl: string;
+  /** 盛り上がり始めを指す VOD のタイムスタンプリンク（VOD が無ければ undefined）。 */
+  vodUrl?: string;
 }
 
 /** 配信終了時の振り返りレポート通知のペイロード。 */
@@ -16,6 +19,8 @@ export interface ReportPayload {
   durationMin: number;
   peakRate: number;
   endReason: EndReason;
+  /** ピークの場面を指す VOD のタイムスタンプリンク（VOD が無ければ undefined）。 */
+  peakVodUrl?: string;
 }
 
 /**
@@ -52,10 +57,11 @@ export class DiscordNotifier implements Notifier, ReportNotifier {
  * Webhook を作らなくても、どんな通知が飛ぶかをその場で確認できる。
  */
 export class ConsoleNotifier implements Notifier, ReportNotifier {
-  async send({ channel, title, rate, baseline, streamUrl }: AlertPayload): Promise<void> {
+  async send({ channel, title, rate, baseline, streamUrl, vodUrl }: AlertPayload): Promise<void> {
     console.log(
       `[notify] 🔥 ${channel} のチャットが盛り上がってる！「${title}」` +
-        ` 直近30秒 ${rate} メッセージ（通常の${formatMultiplier(rate, baseline)}倍・ベースライン ${baseline.toFixed(1)} 件/30秒） ${streamUrl}`
+        ` 直近30秒 ${rate} メッセージ（通常の${formatMultiplier(rate, baseline)}倍・ベースライン ${baseline.toFixed(1)} 件/30秒） ${streamUrl}` +
+        (vodUrl ? ` VOD: ${vodUrl}` : "")
     );
   }
 
@@ -63,7 +69,8 @@ export class ConsoleNotifier implements Notifier, ReportNotifier {
     const durationLabel = payload.endReason === "shutdown" ? "記録時間" : "配信時間";
     console.log(
       `[notify] ${reportHeading(payload)}「${payload.title}」` +
-        ` ${durationLabel} ${payload.durationMin} 分・ピーク流速 ${payload.peakRate} 件/30秒 ${payload.url}`
+        ` ${durationLabel} ${payload.durationMin} 分・ピーク流速 ${payload.peakRate} 件/30秒 ${payload.url}` +
+        (payload.peakVodUrl ? ` ピークの VOD: ${payload.peakVodUrl}` : "")
     );
   }
 }
@@ -77,13 +84,16 @@ export function createNotifier(webhookUrl: string | undefined): Notifier & Repor
 
 export async function sendDiscordAlert(
   webhookUrl: string,
-  { channel, title, rate, baseline, streamUrl }: AlertPayload
+  { channel, title, rate, baseline, streamUrl, vodUrl }: AlertPayload
 ): Promise<void> {
+  const links = [`[配信を見る](${streamUrl})`];
+  if (vodUrl) links.push(`[この場面を VOD で見る](${vodUrl})`);
+
   const payload = {
     embeds: [
       {
         title: `${channel} のチャットが盛り上がってる！`,
-        description: `**${escapeMarkdown(title)}**\n[配信を見る](${streamUrl})`,
+        description: `**${escapeMarkdown(title)}**\n${links.join(" ・ ")}`,
         color: 0xff4500,
         fields: [
           { name: "直近30秒", value: `${rate} メッセージ`, inline: true },
@@ -99,7 +109,7 @@ export async function sendDiscordAlert(
 }
 
 export async function sendDiscordReport(webhookUrl: string, report: ReportPayload): Promise<void> {
-  const { title, url, durationMin, peakRate, endReason } = report;
+  const { title, url, durationMin, peakRate, endReason, peakVodUrl } = report;
   const interrupted = endReason === "shutdown";
   const payload = {
     embeds: [
@@ -109,7 +119,13 @@ export async function sendDiscordReport(webhookUrl: string, report: ReportPayloa
         color: 0x9146ff,
         fields: [
           { name: interrupted ? "記録時間" : "配信時間", value: `${durationMin} 分`, inline: true },
-          { name: "ピーク流速", value: `${peakRate} 件/30秒`, inline: true },
+          {
+            name: "ピーク流速",
+            value: peakVodUrl
+              ? `${peakRate} 件/30秒（[VOD で見る](${peakVodUrl})）`
+              : `${peakRate} 件/30秒`,
+            inline: true,
+          },
         ],
         timestamp: new Date().toISOString(),
       },
@@ -140,6 +156,7 @@ export function buildReportPayload(session: FinishedSession, baseUrl: string): R
     durationMin: Math.round((session.endedAt - session.startedAt) / 60000),
     peakRate: session.peakRate,
     endReason: session.endReason,
+    peakVodUrl: session.peakAt === null ? undefined : vodLinkForWindow(session.stream, session.peakAt),
   };
 }
 

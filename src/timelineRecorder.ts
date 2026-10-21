@@ -1,5 +1,6 @@
 import type { SessionObserver } from "./chatMonitor.js";
 import type { TimelineRepository } from "./timelineRepository.js";
+import type { StreamRef } from "./vod.js";
 
 /**
  * セッションが確定した理由。
@@ -16,7 +17,11 @@ export interface FinishedSession {
   startedAt: number;
   endedAt: number;
   peakRate: number;
+  /** ピーク流速を記録したサンプルの時刻（UTC ミリ秒）。流速が一度も 0 を超えなければ null。 */
+  peakAt: number | null;
   endReason: EndReason;
+  /** VOD リンク用の配信情報（不明なら null）。 */
+  stream: StreamRef | null;
 }
 
 /** 確定したセッションの受け取り先。送信完了を待てるよう Promise を返してもよい。 */
@@ -27,6 +32,8 @@ interface ActiveSession {
   title: string;
   startedAt: number;
   peakRate: number;
+  peakAt: number | null;
+  stream: StreamRef | null;
 }
 
 /**
@@ -43,11 +50,18 @@ export class TimelineRecorder implements SessionObserver {
     private readonly now: () => number = () => Date.now()
   ) {}
 
-  onJoin(channel: string, title: string): void {
+  onJoin(channel: string, title: string, stream?: StreamRef): void {
     if (this.active.has(channel)) return;
     const startedAt = this.now();
-    const id = this.repo.startSession(channel, title, startedAt);
-    this.active.set(channel, { id, title, startedAt, peakRate: 0 });
+    const id = this.repo.startSession(channel, title, startedAt, stream);
+    this.active.set(channel, {
+      id,
+      title,
+      startedAt,
+      peakRate: 0,
+      peakAt: null,
+      stream: stream ? { ...stream } : null,
+    });
   }
 
   onSample(channel: string, rate: number): void {
@@ -56,7 +70,10 @@ export class TimelineRecorder implements SessionObserver {
     // 時計が巻き戻っても経過時間が負にならないよう 0 で下限を取る。
     const t = Math.max(0, this.now() - session.startedAt);
     this.repo.addSample(session.id, t, rate);
-    if (rate > session.peakRate) session.peakRate = rate;
+    if (rate > session.peakRate) {
+      session.peakRate = rate;
+      session.peakAt = session.startedAt + t;
+    }
   }
 
   onTitleChange(channel: string, title: string): void {
@@ -64,6 +81,13 @@ export class TimelineRecorder implements SessionObserver {
     if (!session) return;
     session.title = title;
     this.repo.updateTitle(session.id, title);
+  }
+
+  onVodFound(channel: string, vodId: string): void {
+    const session = this.active.get(channel);
+    if (!session?.stream) return;
+    session.stream.vodId = vodId;
+    this.repo.updateVodId(session.id, vodId);
   }
 
   onPart(channel: string): void {
@@ -101,7 +125,9 @@ export class TimelineRecorder implements SessionObserver {
           startedAt: session.startedAt,
           endedAt,
           peakRate: session.peakRate,
+          peakAt: session.peakAt,
           endReason,
+          stream: session.stream,
         })
       );
     }).catch((err: Error) => {

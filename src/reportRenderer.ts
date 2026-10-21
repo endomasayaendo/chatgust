@@ -1,4 +1,5 @@
 import type { SessionWithSamples } from "./timelineRepository.js";
+import { vodLinkForWindow, type StreamRef } from "./vod.js";
 
 /** SVG のレイアウト定数。viewBox 基準（実表示は width:100% でスケール）。 */
 const W = 1000;
@@ -80,13 +81,26 @@ function findPeaks(
   return chosen.sort((a, b) => a.t - b.t);
 }
 
+/** 波形にマークし、VOD リンクを添える「盛り上がった場面」を選ぶ。 */
+function selectPeaks(
+  samples: { t: number; rate: number }[],
+  durationMs: number,
+  peak: number
+): { t: number; rate: number }[] {
+  return findPeaks(samples, {
+    max: 4,
+    minGapMs: Math.max(durationMs * 0.12, 120_000),
+    minRate: Math.max(peak * 0.4, 3),
+  });
+}
+
 /**
  * 配信セッションを、外部依存のない自己完結 HTML レポートに描画する純粋関数。
  * サンプル（流速）を inline SVG の折れ線（Y軸=件/30秒）で表し、ブラウザで開くだけで波形が見える。
  * DB やファイルへの副作用は持たない。
  */
 export function renderHtml(session: SessionWithSamples): string {
-  const { id, channel, title, startedAt, endedAt, samples } = session;
+  const { id, channel, title, startedAt, endedAt, stream, samples } = session;
 
   const lastT = samples.length ? samples[samples.length - 1].t : 0;
   const effectiveEnd = endedAt ?? startedAt + lastT;
@@ -94,7 +108,9 @@ export function renderHtml(session: SessionWithSamples): string {
   const peak = samples.reduce((mx, s) => Math.max(mx, s.rate), 0);
   const whenLabel = `${jstDateTime(startedAt)} 〜 ${jstTime(effectiveEnd)} JST`;
 
-  const chart = renderChart(samples, durationMs, peak, startedAt);
+  const peaks = selectPeaks(samples, durationMs, peak);
+  const chart = renderChart(samples, durationMs, peak, startedAt, peaks);
+  const vodLinks = renderVodLinks(peaks, startedAt, stream);
 
   const stat = (label: string, value: string) =>
     `<div class="stat"><div class="stat-v">${value}</div><div class="stat-l">${label}</div></div>`;
@@ -122,6 +138,12 @@ export function renderHtml(session: SessionWithSamples): string {
   .foot a { color: #a970ff; text-decoration: none; }
   .foot a:hover { text-decoration: underline; }
   .empty { color: #adadb8; padding: 40px 0; text-align: center; }
+  .vod { margin-top: 16px; }
+  .vod h2 { font-size: 0.85rem; color: #adadb8; font-weight: 600; margin-bottom: 8px; }
+  .vod ul { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+  .vod a { display: inline-block; background: #1f1f23; border-radius: 8px; padding: 8px 12px; color: #efeff1; text-decoration: none; font-size: 0.85rem; }
+  .vod a:hover { background: #2a2a30; }
+  .vod .rate { color: #a970ff; font-weight: 700; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -137,6 +159,7 @@ export function renderHtml(session: SessionWithSamples): string {
     </div>
 
     <div class="panel">${chart}</div>
+${vodLinks}
 
     <p class="foot"><a href="/api/reports/${esc(id)}">JSON を見る</a></p>
   </div>
@@ -145,12 +168,33 @@ export function renderHtml(session: SessionWithSamples): string {
 `;
 }
 
+/**
+ * 盛り上がった場面ごとに、VOD の該当位置へ飛ぶリンクの一覧を返す。
+ * VOD が無い（保存しないチャンネル・配信情報を記録する前の旧データ）なら何も出さない。
+ */
+function renderVodLinks(
+  peaks: { t: number; rate: number }[],
+  startedAt: number,
+  stream: StreamRef | null
+): string {
+  const items = peaks.flatMap((p) => {
+    const url = vodLinkForWindow(stream, startedAt + p.t);
+    if (!url) return [];
+    return [
+      `<li><a href="${esc(url)}" target="_blank" rel="noopener">${jstTime(startedAt + p.t)}<span class="rate">${p.rate}</span></a></li>`,
+    ];
+  });
+  if (items.length === 0) return "";
+  return `    <section class="vod"><h2>盛り上がった場面を VOD で見る</h2><ul>${items.join("")}</ul></section>`;
+}
+
 /** サンプル配列から折れ線（＋薄い面）と軸を描いた SVG 文字列を返す。 */
 function renderChart(
   samples: { t: number; rate: number }[],
   durationMs: number,
   peak: number,
-  startedAt: number
+  startedAt: number,
+  peaks: { t: number; rate: number }[]
 ): string {
   if (samples.length === 0) {
     return `<p class="empty">サンプルがありません</p>`;
@@ -197,11 +241,6 @@ function renderChart(
 
   // ピークを直接ラベル。全体最大の1点だけでなく、離れた複数の山（神場面候補）をマークする。
   // 最大の山はフルラベル「ピーク N (HH:MM)」、2番目以降は控えめに時刻だけを添える。
-  const peaks = findPeaks(samples, {
-    max: 4,
-    minGapMs: Math.max(durationMs * 0.12, 120_000),
-    minRate: Math.max(peak * 0.4, 3),
-  });
   // 最大の山は選ばれたピークの中から参照で特定する。full samples の t で比較すると、
   // 頂点が同値のプラトーだと reduce と findPeaks が別サンプルを指してズレる。
   const topPeak = peaks.reduce((a, b) => (b.rate >= a.rate ? b : a), peaks[0]);

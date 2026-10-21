@@ -150,6 +150,7 @@ describe("本番パイプラインとの一致", () => {
             onJoin() {},
             onSample: (_ch, rate) => recorded.push({ t: Date.now() - startedAt, rate }),
             onTitleChange() {},
+            onVodFound() {},
             onPart() {},
           },
         }
