@@ -290,6 +290,20 @@ npm run dev:report -- --notify # さらに Discord へ振り返りリンクを1�
 - Discord を使わず、出力された `http://localhost:PORT/reports/<id>` をブラウザで直接開けば、本番に一切触れず波形とリンク解決を確認できる。
 - すでに `npm start` を動かしている場合はポートが衝突するので、片方を止めるか `PORT` を変える。
 
+### 検知パラメータのバックテスト
+
+振り返り用に貯まった流速（5秒ごとの「直近30秒の件数」）を再生し、パラメータごとに「いつ通知が飛んだか」を出す。判定は本番と同じ関数（`judgeSpike` / `ConsecutiveSpikePolicy` / `Cooldown`）を使う。セッション・サンプルのデータは書き換えない（本番と同じ `openDb` で開くので、スキーマの作成・移行は本番起動時と同様に行われる）。
+
+```bash
+npm run backtest                                   # 現行パラメータ（.env、無ければ既定値）で全セッション
+npm run backtest -- --params z=2.5 --params z=3.5  # 複数の組を比較（省略したキーは現行値）
+npm run backtest -- --session <id> --db ./data/chatgust.db
+```
+
+- `--params` のキーは `z` / `threshold` / `minRate` / `cooldown`（分）。出力はセッション×組ごとの通知時刻（JST）と、組ごとの通知数・1時間あたりの比較表。
+- 記録からの再構成なので**近似**。5秒タイマーの発火のずれや窓境界（`>=` / `<`）の扱いの差は残る（記録が欠けた時点は最も近いサンプルで埋める）。
+- クールダウンは本番と同じく、同じチャンネルの配信をまたいで引き継ぐ。ただしプロセス再起動によるリセットは記録から分からないため再現しない。
+
 ---
 
 ## 🗂 ファイル構成
@@ -305,9 +319,10 @@ chatgust/
 │   ├── streamSync.ts     # フォロー→絞り込み→ライブ取得→監視へ反映（定期同期）
 │   ├── chatMonitor.ts    # 検知コーディネーター（detector・policy・irc・SessionObserver を束ねる）
 │   ├── ircClient.ts      # IRC WebSocket 転送（1接続で全チャンネルを JOIN）
-│   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ + zスコア）
+│   ├── rateDetector.ts   # 流速計算（スライディングウィンドウ）+ スパイク判定 judgeSpike（zスコア）
 │   ├── spikePolicy.ts    # アラート発火ポリシー（2連続スパイクで確定）
 │   ├── alertDispatcher.ts# クールダウン・履歴・通知の送出
+│   ├── cooldown.ts       # チャンネルごとの連投抑制（本番とバックテストで共有）
 │   ├── notifier.ts       # Discord Webhook 送信（アラート + 振り返りレポート通知）
 │   ├── notifyFilter.ts   # 通知対象の絞り込み（許可リスト）
 │   ├── db.ts             # 振り返りDB（SQLite）の接続・スキーマ・WAL
@@ -324,7 +339,8 @@ chatgust/
 │   └── cd.yml          # CI 成功後に Fly.io へ自動デプロイ
 ├── scripts/
 │   ├── checkEnv.ts     # make setup で .env の必須項目を検査
-│   └── devReport.ts    # 振り返りレポートの動作確認用ハーネス
+│   ├── devReport.ts    # 振り返りレポートの動作確認用ハーネス
+│   └── backtest.ts     # 記録済み流速を再生して検知パラメータを評価
 ├── fly.toml            # Fly.io 設定
 ├── Dockerfile          # 本番・開発共通のイメージ
 ├── compose.yaml        # 開発用（make up）。ソース変更で自動再起動

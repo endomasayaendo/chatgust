@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
     "dev:report": "tsx scripts/devReport.ts",
+    "backtest": "tsx scripts/backtest.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
