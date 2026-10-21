@@ -3,7 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { loadConfig, type Config } from "./config.js";
 import { AppTokenStore, TokenStore, type AccessTokenSource } from "./tokenStore.js";
-import { DiscordNotifier, buildReportPayload } from "./notifier.js";
+import { createNotifier, buildReportPayload } from "./notifier.js";
 import { AlertDispatcher } from "./alertDispatcher.js";
 import { ChatMonitor } from "./chatMonitor.js";
 import { StreamSync } from "./streamSync.js";
@@ -58,7 +58,7 @@ if (config.authMode === "app") {
   );
 }
 
-const notifier = new DiscordNotifier(config.discordWebhookUrl);
+const notifier = createNotifier(config.discordWebhookUrl);
 const dispatcher = new AlertDispatcher(notifier, config.cooldownMin * 60 * 1000);
 
 // --- 振り返り（レポート）系の配線 ---

@@ -26,7 +26,8 @@ export function resolveAuthMode(
 export interface Config {
   twitchClientId: string;
   twitchClientSecret: string;
-  discordWebhookUrl: string;
+  /** 未設定なら通知はコンソールに出力する（ConsoleNotifier）。 */
+  discordWebhookUrl?: string;
   dashboardPassword?: string;
   notifyChannels: Set<string>;
   port: number;
@@ -40,6 +41,12 @@ export interface Config {
   dataDir: string;
   publicBaseUrl: string;
 }
+
+/**
+ * 以前の .env.example にあった Webhook の見本値。これのままだと Discord 送信が失敗ログになるだけで
+ * 通知の中身が見えないため、未設定と同じに扱う（`make setup` を飛ばして起動した場合も拾う）。
+ */
+export const PLACEHOLDER_WEBHOOK_URL = "https://discord.com/api/webhooks/xxx/yyy";
 
 /** 正の有限数であることを保証する。満たさなければ分かりやすいメッセージで throw。 */
 function positiveNumber(raw: string, name: string): number {
@@ -73,6 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     TWITCH_CLIENT_ID,
     TWITCH_CLIENT_SECRET,
     DISCORD_WEBHOOK_URL,
+    REQUIRE_DISCORD_WEBHOOK,
     DASHBOARD_PASSWORD,
     NOTIFY_CHANNELS,
     TWITCH_ACCESS_TOKEN,
@@ -86,10 +94,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = positiveNumber(PORT, "PORT");
   const notifyChannels = parseAllowlist(NOTIFY_CHANNELS);
 
-  if (!TWITCH_CLIENT_ID || !DISCORD_WEBHOOK_URL) {
+  if (!TWITCH_CLIENT_ID) {
     throw new Error(
       "Missing required env vars. Copy .env.example to .env and fill in the values."
     );
+  }
+
+  // 空文字（.env に `DISCORD_WEBHOOK_URL=` と空で置かれる）と見本値は未設定扱いにする。
+  const discordWebhookUrl =
+    DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL !== PLACEHOLDER_WEBHOOK_URL ? DISCORD_WEBHOOK_URL : undefined;
+
+  // 本番（fly.toml で指定）では、Webhook の設定漏れでコンソール出力に落ちて通知が黙って届かなくなるのを防ぐ。
+  if (REQUIRE_DISCORD_WEBHOOK && !discordWebhookUrl) {
+    throw new Error("DISCORD_WEBHOOK_URL is required (REQUIRE_DISCORD_WEBHOOK is set).");
   }
 
   const authMode = resolveAuthMode(accessToken, notifyChannels);
@@ -105,7 +122,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     twitchClientId: TWITCH_CLIENT_ID,
     twitchClientSecret: TWITCH_CLIENT_SECRET ?? "",
-    discordWebhookUrl: DISCORD_WEBHOOK_URL,
+    discordWebhookUrl,
     dashboardPassword: DASHBOARD_PASSWORD,
     notifyChannels,
     port,

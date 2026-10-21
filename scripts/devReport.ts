@@ -26,8 +26,9 @@ const baseUrl = process.env.DEV_PUBLIC_BASE_URL ?? `http://localhost:${PORT}`;
 
 // 本番と別のチャンネルで確認したいときは DEV_DISCORD_WEBHOOK_URL を使う。
 // 無ければ本番の DISCORD_WEBHOOK_URL にフォールバック（本番チャンネルに届く点に注意）。
-const devWebhook = process.env.DEV_DISCORD_WEBHOOK_URL;
-const webhook = devWebhook ?? process.env.DISCORD_WEBHOOK_URL ?? "";
+// 空文字（.env.example の `DEV_DISCORD_WEBHOOK_URL=`）も未設定扱いにするため || を使う。
+const devWebhook = process.env.DEV_DISCORD_WEBHOOK_URL || undefined;
+const webhook = devWebhook || process.env.DISCORD_WEBHOOK_URL || "";
 if (notify && !devWebhook && webhook) {
   console.warn(
     "⚠ DEV_DISCORD_WEBHOOK_URL が未設定のため、本番と同じ DISCORD_WEBHOOK_URL に送信します（本番チャンネルにテスト投稿が届きます）。"

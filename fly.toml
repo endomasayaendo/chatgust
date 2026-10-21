@@ -11,6 +11,8 @@ primary_region = "nrt"
 [env]
   # 振り返りDBは永続ディスク（Volume）上に置く。下の [mounts] の destination と揃える。
   DATA_DIR = "/data"
+  # 本番では Discord 通知を必須にする（未設定ならコンソール出力に落ちず、起動エラーで止める）。
+  REQUIRE_DISCORD_WEBHOOK = "1"
 
 [http_service]
   internal_port = 3000
