@@ -19,6 +19,11 @@ describe("loadConfig", () => {
     expect(loadConfig(base).discordWebhookUrl).toBe("https://discord.com/api/webhooks/x");
   });
 
+  it("以前の .env.example の見本値のままの DISCORD_WEBHOOK_URL は未設定扱い", () => {
+    const cfg = loadConfig({ ...base, DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/xxx/yyy" });
+    expect(cfg.discordWebhookUrl).toBeUndefined();
+  });
+
   it("REQUIRE_DISCORD_WEBHOOK があれば（本番）DISCORD_WEBHOOK_URL 未設定で throw", () => {
     expect(() =>
       loadConfig({ ...base, REQUIRE_DISCORD_WEBHOOK: "1", DISCORD_WEBHOOK_URL: "" })

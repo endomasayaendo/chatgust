@@ -68,6 +68,13 @@ export class ConsoleNotifier implements Notifier, ReportNotifier {
   }
 }
 
+/** 通知先を選ぶ。Webhook が無ければ（開発中など）その旨をログし、コンソールに出す。 */
+export function createNotifier(webhookUrl: string | undefined): Notifier & ReportNotifier {
+  if (webhookUrl) return new DiscordNotifier(webhookUrl);
+  console.log("[config] Discord 未設定のため通知はコンソールに出力します（DISCORD_WEBHOOK_URL）");
+  return new ConsoleNotifier();
+}
+
 export async function sendDiscordAlert(
   webhookUrl: string,
   { channel, title, rate, baseline, streamUrl }: AlertPayload

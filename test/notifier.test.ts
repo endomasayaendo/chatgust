@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ConsoleNotifier, sendDiscordAlert, sendDiscordReport } from "../src/notifier.js";
+import {
+  ConsoleNotifier,
+  DiscordNotifier,
+  createNotifier,
+  sendDiscordAlert,
+  sendDiscordReport,
+} from "../src/notifier.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/abc/xyz";
 
@@ -232,5 +238,20 @@ describe("ConsoleNotifier", () => {
     expect(out).toContain("途中まで");
     expect(out).not.toContain("配信が終了");
     expect(out).toContain("記録時間 42 分");
+  });
+});
+
+describe("createNotifier", () => {
+  it("Webhook が無ければコンソール出力を選び、その旨をログする", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(createNotifier(undefined)).toBeInstanceOf(ConsoleNotifier);
+    expect(logSpy.mock.calls.join("\n")).toContain("コンソールに出力");
+  });
+
+  it("Webhook があれば Discord に送る", async () => {
+    const notifier = createNotifier(WEBHOOK);
+    expect(notifier).toBeInstanceOf(DiscordNotifier);
+    await notifier.send({ channel: "foo", title: "t", rate: 10, baseline: 1, streamUrl: "https://twitch.tv/foo" });
+    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK);
   });
 });

@@ -22,6 +22,12 @@ export interface Config {
   publicBaseUrl: string;
 }
 
+/**
+ * 以前の .env.example にあった Webhook の見本値。これのままだと Discord 送信が失敗ログになるだけで
+ * 通知の中身が見えないため、未設定と同じに扱う（`make setup` を飛ばして起動した場合も拾う）。
+ */
+export const PLACEHOLDER_WEBHOOK_URL = "https://discord.com/api/webhooks/xxx/yyy";
+
 /** 正の有限数であることを保証する。満たさなければ分かりやすいメッセージで throw。 */
 function positiveNumber(raw: string, name: string): number {
   const value = Number(raw);
@@ -63,16 +69,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  // 空文字（.env に `DISCORD_WEBHOOK_URL=` と空で置かれる）と見本値は未設定扱いにする。
+  const discordWebhookUrl =
+    DISCORD_WEBHOOK_URL && DISCORD_WEBHOOK_URL !== PLACEHOLDER_WEBHOOK_URL ? DISCORD_WEBHOOK_URL : undefined;
+
   // 本番（fly.toml で指定）では、Webhook の設定漏れでコンソール出力に落ちて通知が黙って届かなくなるのを防ぐ。
-  if (REQUIRE_DISCORD_WEBHOOK && !DISCORD_WEBHOOK_URL) {
+  if (REQUIRE_DISCORD_WEBHOOK && !discordWebhookUrl) {
     throw new Error("DISCORD_WEBHOOK_URL is required (REQUIRE_DISCORD_WEBHOOK is set).");
   }
 
   return {
     twitchClientId: TWITCH_CLIENT_ID,
     twitchClientSecret: TWITCH_CLIENT_SECRET ?? "",
-    // 空文字（.env に `DISCORD_WEBHOOK_URL=` と空で置かれる）も未設定扱いにする。
-    discordWebhookUrl: DISCORD_WEBHOOK_URL || undefined,
+    discordWebhookUrl,
     dashboardPassword: DASHBOARD_PASSWORD,
     notifyChannels: parseAllowlist(NOTIFY_CHANNELS),
     port,

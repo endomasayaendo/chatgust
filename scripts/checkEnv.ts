@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { pathToFileURL } from "url";
 import { parse } from "dotenv";
+import { PLACEHOLDER_WEBHOOK_URL } from "../src/config.js";
 
 /**
  * `make setup` から呼ぶ .env の検査。必須項目が「未記入／.env.example の見本値のまま／OK」かを判定し、
@@ -43,7 +44,7 @@ const OPTIONAL: { key: string; hint: string; unsetNote: string; placeholder?: st
     key: "DISCORD_WEBHOOK_URL",
     hint: "Discord のチャンネル設定 › 連携サービス › ウェブフック で作成し URL をコピー",
     unsetNote: "通知はコンソールに出力されます",
-    placeholder: "https://discord.com/api/webhooks/xxx/yyy",
+    placeholder: PLACEHOLDER_WEBHOOK_URL,
   },
 ];
 

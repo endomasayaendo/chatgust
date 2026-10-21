@@ -3,7 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { loadConfig, type Config } from "./config.js";
 import { TokenStore } from "./tokenStore.js";
-import { ConsoleNotifier, DiscordNotifier, buildReportPayload } from "./notifier.js";
+import { createNotifier, buildReportPayload } from "./notifier.js";
 import { AlertDispatcher } from "./alertDispatcher.js";
 import { ChatMonitor } from "./chatMonitor.js";
 import { StreamSync } from "./streamSync.js";
@@ -42,12 +42,7 @@ const tokenStore = new TokenStore(
   config.refreshToken
 );
 
-if (!config.discordWebhookUrl) {
-  console.log("[config] Discord 未設定のため通知はコンソールに出力します（DISCORD_WEBHOOK_URL）");
-}
-const notifier = config.discordWebhookUrl
-  ? new DiscordNotifier(config.discordWebhookUrl)
-  : new ConsoleNotifier();
+const notifier = createNotifier(config.discordWebhookUrl);
 const dispatcher = new AlertDispatcher(notifier, config.cooldownMin * 60 * 1000);
 
 // --- 振り返り（レポート）系の配線 ---
