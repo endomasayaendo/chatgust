@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { parseParams, reconstructWindowCounts, replaySession, type BacktestParams } from "../scripts/backtest.js";
+import {
+  ReplayCooldown,
+  parseParams,
+  reconstructWindowCounts,
+  replaySession,
+  type BacktestParams,
+} from "../scripts/backtest.js";
 import { ChatMonitor } from "../src/chatMonitor.js";
 import { AlertDispatcher } from "../src/alertDispatcher.js";
 import { RateDetector, judgeSpike } from "../src/rateDetector.js";
@@ -80,6 +86,17 @@ describe("replaySession", () => {
     expect(replaySession(s, PARAMS)).toHaveLength(1);
     expect(replaySession(s, { ...PARAMS, cooldownMin: 1 })).toHaveLength(2);
   });
+
+  it("同じ cooldown を渡すと、配信をまたいでクールダウンが効く（本番の AlertDispatcher と同じ）", () => {
+    // 1本目: 205秒で通知 → 4分で配信が落ちる。2本目: 1分後に再開し、開始205秒（=1本目の通知から約5分弱）でスパイク
+    const first = { channel: "foo", startedAt, samples: samples(48, burst(200_000, 210_000)) };
+    const second = { channel: "foo", startedAt: startedAt + 300_000, samples: samples(60, burst(190_000, 200_000)) };
+
+    const shared = new ReplayCooldown(PARAMS.cooldownMin);
+    expect(replaySession(first, PARAMS, shared)).toHaveLength(1);
+    expect(replaySession(second, PARAMS, shared)).toEqual([]); // 1本目の通知から 5 分未満
+    expect(replaySession(second, PARAMS)).toHaveLength(1); // 引き継がなければ通知される
+  });
 });
 
 describe("parseParams", () => {
@@ -90,6 +107,7 @@ describe("parseParams", () => {
   it("未知のキー・不正な値は throw", () => {
     expect(() => parseParams("foo=1", PARAMS)).toThrow(/Invalid --params/);
     expect(() => parseParams("z=0", PARAMS)).toThrow(/Invalid --params/);
+    expect(() => parseParams("z=2=5", PARAMS)).toThrow(/Invalid --params/);
   });
 });
 

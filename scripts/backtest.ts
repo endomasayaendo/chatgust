@@ -13,7 +13,8 @@ import { Cooldown } from "../src/cooldown.js";
 /**
  * 記録済みの流速（samples: 5秒ごとの「直近30秒の件数」）を再生し、検知パラメータごとに
  * 「いつ通知が飛んだか」を算出するバックテスト。判定は本番と同じ judgeSpike / ConsecutiveSpikePolicy /
- * Cooldown を使う。DB のデータは書き換えない（開くのは本番と同じ openDb）。
+ * Cooldown を使う。セッション・サンプルのデータは書き換えない（本番と同じ openDb で開くため、
+ * スキーマの作成・移行は本番の起動時と同様に行われる）。
  *
  *   npm run backtest                                  … 現行パラメータ（.env / 既定値）で全セッション
  *   npm run backtest -- --params z=2.5 --params z=3.5  … 複数のパラメータの組を比較（省略したキーは現行値）
@@ -66,23 +67,44 @@ export function reconstructWindowCounts(samples: Sample[], t: number): number[] 
   return counts;
 }
 
-/** 1セッションの記録を再生し、指定パラメータで通知が飛んだ時刻を返す。 */
+/**
+ * 再生用のクールダウン。本番の AlertDispatcher はプロセスに1つで、クールダウンは配信（セッション）を
+ * またいでチャンネルごとに効く（part で消えるのは SpikePolicy の状態だけ）。同じ状態を持たせるため、
+ * 複数セッションを古い順に再生するときは1つのインスタンスを使い回す。
+ */
+export class ReplayCooldown {
+  private now = 0;
+  private readonly cooldown: Cooldown;
+
+  constructor(cooldownMin: number) {
+    this.cooldown = new Cooldown(cooldownMin * 60 * 1000, () => this.now);
+  }
+
+  tryAcquire(channel: string, at: number): boolean {
+    this.now = at;
+    return this.cooldown.tryAcquire(channel);
+  }
+}
+
+/**
+ * 1セッションの記録を再生し、指定パラメータで通知が飛んだ時刻を返す。
+ * 配信をまたいだクールダウンを再現するときは、古い順のセッションで同じ cooldown を渡す。
+ */
 export function replaySession(
   session: Pick<SessionWithSamples, "channel" | "startedAt" | "samples">,
-  params: BacktestParams
+  params: BacktestParams,
+  cooldown = new ReplayCooldown(params.cooldownMin)
 ): BacktestAlert[] {
   const policy = new ConsecutiveSpikePolicy();
-  let clock = 0;
-  const cooldown = new Cooldown(params.cooldownMin * 60 * 1000, () => clock);
   const alerts: BacktestAlert[] = [];
 
   for (const { t, rate } of session.samples) {
-    clock = session.startedAt + t;
+    const at = session.startedAt + t;
     const counts = reconstructWindowCounts(session.samples, t);
     const isSpike = t >= WARMUP_MS && judgeSpike(rate, counts, params);
-    if (policy.confirm(session.channel, isSpike) && cooldown.tryAcquire(session.channel)) {
+    if (policy.confirm(session.channel, isSpike) && cooldown.tryAcquire(session.channel, at)) {
       const baseline = counts.reduce((sum, c) => sum + c, 0) / counts.length;
-      alerts.push({ at: clock, rate, baseline });
+      alerts.push({ at, rate, baseline });
     }
   }
   return alerts;
@@ -98,10 +120,10 @@ export function parseParams(spec: string, base: BacktestParams): BacktestParams 
   };
   const params = { ...base };
   for (const pair of spec.split(",").map((s) => s.trim()).filter(Boolean)) {
-    const [name, raw] = pair.split("=");
-    const key = keys[name];
-    const value = Number(raw);
-    if (!key || !Number.isFinite(value) || value <= 0) {
+    const parts = pair.split("=");
+    const key = keys[parts[0]];
+    const value = Number(parts[1]);
+    if (parts.length !== 2 || !key || !Number.isFinite(value) || value <= 0) {
       throw new Error(`Invalid --params "${pair}". Use z / threshold / minRate / cooldown with positive numbers.`);
     }
     params[key] = value;
@@ -153,7 +175,8 @@ function main(): void {
   try {
     const repo = new SqliteTimelineRepository(db);
     const ids = values.session ?? repo.listReports(Number.MAX_SAFE_INTEGER).map((r) => r.id).reverse();
-    sessions = ids.flatMap((id) => repo.getSession(id) ?? []);
+    // クールダウンを配信をまたいで引き継ぐため、古い順に再生する。
+    sessions = ids.flatMap((id) => repo.getSession(id) ?? []).sort((a, b) => a.startedAt - b.startedAt);
     const missing = ids.filter((id) => !sessions.some((s) => s.id === id));
     if (missing.length > 0) {
       console.error(`✗ セッションが見つかりません: ${missing.join(", ")}（id はダッシュボードのレポートURL /reports/<id>）`);
@@ -167,18 +190,21 @@ function main(): void {
   console.log(`バックテスト: ${dbPath}（${sessions.length} セッション）`);
   console.log(
     "※ 5秒ごとの記録（直近30秒の件数）から判定を再構成した近似です。タイマー発火のずれや" +
-      "窓境界（>= / <）の扱いの差により、本番の判定とは厳密には一致しません。\n"
+      "窓境界（>= / <）の扱いの差により、本番の判定とは厳密には一致しません。\n" +
+      "※ クールダウンは同じチャンネルの配信をまたいで引き継ぎます（本番と同じ）。ただしプロセス再起動による" +
+      "リセットは記録から分からないため再現しません。\n"
   );
   sets.forEach((p, i) => console.log(`  [${names[i]}] ${label(p)}${p === current ? "（現行）" : ""}`));
 
   const totals = sets.map(() => ({ alerts: 0, sessionsWithAlert: 0 }));
+  const cooldowns = sets.map((p) => new ReplayCooldown(p.cooldownMin));
   let recordedMs = 0;
   for (const s of sessions) {
     const lastT = s.samples.at(-1)?.t ?? 0;
     recordedMs += lastT;
     console.log(`\n■ ${s.channel}「${s.title}」 ${jst(s.startedAt, true)} 〜（${Math.round(lastT / 60000)}分） id=${s.id}`);
     sets.forEach((p, i) => {
-      const alerts = replaySession(s, p);
+      const alerts = replaySession(s, p, cooldowns[i]);
       totals[i].alerts += alerts.length;
       if (alerts.length > 0) totals[i].sessionsWithAlert++;
       const detail = alerts
