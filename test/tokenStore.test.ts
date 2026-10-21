@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { TokenStore } from "../src/tokenStore.js";
+import { AppTokenStore, TokenStore } from "../src/tokenStore.js";
 
 let dir: string;
 
@@ -65,5 +65,29 @@ describe("TokenStore", () => {
 
     await expect(store.refresh()).resolves.toBeUndefined();
     expect(store.accessToken).toBe("newA");
+  });
+});
+
+describe("AppTokenStore", () => {
+  it("取得前は空で、refresh で client credentials のトークンを保持する", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce("app1").mockResolvedValueOnce("app2");
+    const store = new AppTokenStore("cid", "secret", fetchFn);
+    expect(store.accessToken).toBe("");
+
+    await store.refresh();
+    expect(fetchFn).toHaveBeenCalledWith("cid", "secret");
+    expect(store.accessToken).toBe("app1");
+
+    await store.refresh(); // 失効時の取り直し
+    expect(store.accessToken).toBe("app2");
+  });
+
+  it("取得に失敗したら throw し、既存のトークンは変えない", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce("app1").mockRejectedValueOnce(new Error("down"));
+    const store = new AppTokenStore("cid", "secret", fetchFn);
+    await store.refresh();
+
+    await expect(store.refresh()).rejects.toThrow("down");
+    expect(store.accessToken).toBe("app1");
   });
 });

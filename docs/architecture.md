@@ -8,6 +8,8 @@ chatgust は、Twitch のフォロー中ライブ配信を監視し、チャッ�
 | IRC 受信 | イベント駆動 | チャットが届くたびに受信時刻を記録する |
 | 検知・記録ループ | 5 秒ごと | 各チャンネルの流速を計測し、（a）盛り上がりを判定して通知へ、（b）流速を配信ごとに SQLite へ記録する |
 
+Twitch API の認証は 2 通り（`loadConfig()` が `authMode` を決める）。`npm run auth` 済みならユーザーアクセストークン（`TokenStore`）でフォロー一覧を監視対象にする **user モード**、トークンが無く `NOTIFY_CHANNELS` が指定されていれば Client ID / Secret から取るアプリアクセストークン（`AppTokenStore`）で指定チャンネルだけを監視する **app モード**。フォロー一覧（Get Followed Channels）だけがユーザートークン必須で、ライブ判定（Get Streams）はアプリトークンでも呼べ、IRC は匿名接続なのでトークンを使わない。
+
 通知（リアルタイム）と振り返り（事後）は、共通の流速計測（`RateDetector`）の上に並ぶ **別系統**。`ChatMonitor` は極小の `SessionObserver` インターフェース越しに記録係へ「開始・流速・終了」を渡すだけで、保存方式や通知手段は知らない。配信終了（`part`）で記録係がセッションを確定し、レポートリンクを Discord に送る。
 
 ## 全体像
@@ -15,12 +17,12 @@ chatgust は、Twitch のフォロー中ライブ配信を監視し、チャッ�
 ```mermaid
 flowchart TD
     subgraph boot["起動 · index.ts（composition root）"]
-        A["loadConfig()<br/>不正なら process.exit(1)"] --> B["依存を生成・配線<br/>TokenStore → Notifier → Dispatcher<br/>→ Recorder(SQLite) → ChatMonitor → StreamSync → server"]
+        A["loadConfig()<br/>不正なら process.exit(1)"] --> B["依存を生成・配線<br/>TokenStore / AppTokenStore → Notifier → Dispatcher<br/>→ Recorder(SQLite) → ChatMonitor → StreamSync → server"]
         B --> C["app.listen(port)<br/>初回 sync() + setInterval(sync, 60s)"]
     end
 
     C --> D{{"同期ループ · 60秒ごと<br/>streamSync.sync()"}}
-    D --> E["Twitch API: フォロー中 → 許可リスト絞り込み<br/>→ ライブ配信を取得"]
+    D --> E["Twitch API: フォロー中 → 許可リスト絞り込み<br/>（app モードは許可リストそのまま）<br/>→ ライブ配信を取得"]
     E --> F["live ごとに monitor.join(login, title)<br/>ライブ外は monitor.part()"]
 
     F --> G["channels Map に登録<br/>+ IRC へ JOIN + 検知タイマー起動（1本のみ）<br/>+ observer.onJoin（セッション開始）"]
@@ -106,7 +108,7 @@ sequenceDiagram
 | # | 処理 | 位置 |
 | --- | --- | --- |
 | 1 | listen 成功後に初回 sync、以降 60 秒間隔で登録 | `index.ts` app.listen コールバック → `StreamSync.sync()` + `setInterval` |
-| 2 | フォロー中 → 許可リスト絞り込み → ライブ取得 | `StreamSync.sync()`（`getFollowedChannels` → `filterChannels` → `getLiveStreams`） |
+| 2 | フォロー中 → 許可リスト絞り込み → ライブ取得（app モードはフォロー一覧を取らず `NOTIFY_CHANNELS` をそのまま使う） | `StreamSync.sync()`（`resolveTargets()`: `getFollowedChannels` → `filterChannels`、→ `getLiveStreams`） |
 | 3 | 戻り値 `Stream[]`（login・title を含む） | `TwitchApi.getLiveStreams()` |
 | 4 | `monitor.join(stream.login, stream.title)` | `StreamSync.sync()` → `ChatMonitor.join()` |
 | 5 | IRC へ JOIN | `ChatMonitor.join()` → `IrcClient.join()` |
@@ -147,4 +149,4 @@ sequenceDiagram
 - **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。
   - 不変条件: **`this.ws` は生きている接続だけを指し、未接続なら `null`**。`close` で必ず `null` に戻す。閉じたソケットを保持すると `join()` が「接続済み」と誤認し、二度と再接続されない（過去にこれで全レポートの流速が 0 になった）。
   - 監視対象が 0 の間は接続を張り直さず、次の `join()` で張る。「接続なし」は正常な状態のひとつ。
-- **自己修復** — トークン失効(401)を検知したら `TokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。IRC も切断を検知したら 10 秒後に再接続し、ハンドシェイクが固まった場合も `handshakeTimeout` で必ず `close` → 再接続経路に乗る（沈黙したまま止まらない）。
+- **自己修復** — トークン失効(401)を検知したら `tokenStore.refresh()` し、次サイクルで userId を取り直す（`StreamSync.sync()` の 401 catch）。app モードの `AppTokenStore` は client credentials で取り直すだけ（`.env` には書かない）。IRC も切断を検知したら 10 秒後に再接続し、ハンドシェイクが固まった場合も `handshakeTimeout` で必ず `close` → 再接続経路に乗る（沈黙したまま止まらない）。

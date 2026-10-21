@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkRequired, hasTokens } from "../scripts/checkEnv.js";
+import { checkRequired, hasNotifyChannels, hasTokens } from "../scripts/checkEnv.js";
 
 const example = {
   TWITCH_CLIENT_ID: "your_client_id_here",
@@ -44,5 +44,14 @@ describe("hasTokens", () => {
     expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "r" })).toBe(true);
     expect(hasTokens({ TWITCH_ACCESS_TOKEN: "a", TWITCH_REFRESH_TOKEN: "" })).toBe(false);
     expect(hasTokens({})).toBe(false);
+  });
+});
+
+describe("hasNotifyChannels", () => {
+  it("NOTIFY_CHANNELS に1つ以上のチャンネルがあるときだけ true", () => {
+    expect(hasNotifyChannels({ NOTIFY_CHANNELS: "foo,bar" })).toBe(true);
+    expect(hasNotifyChannels({ NOTIFY_CHANNELS: " , " })).toBe(false);
+    expect(hasNotifyChannels({ NOTIFY_CHANNELS: "" })).toBe(false);
+    expect(hasNotifyChannels({})).toBe(false);
   });
 });

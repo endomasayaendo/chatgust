@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
-import { refreshAccessToken } from "./twitchApi.js";
+import { getAppAccessToken, refreshAccessToken } from "./twitchApi.js";
 
 type RefreshFn = (
   clientId: string,
@@ -9,10 +9,19 @@ type RefreshFn = (
 ) => Promise<{ accessToken: string; refreshToken: string }>;
 
 /**
- * Twitch のアクセストークンとリフレッシュトークンを保持し、
+ * StreamSync が使うアクセストークンの取得元。
+ * `accessToken` が空なら未取得で、`refresh()` で取得（失効時は取り直し）する。
+ */
+export interface AccessTokenSource {
+  readonly accessToken: string;
+  refresh(): Promise<void>;
+}
+
+/**
+ * Twitch のユーザーアクセストークンとリフレッシュトークンを保持し、
  * トークンの更新（リフレッシュ）と `.env` への永続化を担う。
  */
-export class TokenStore {
+export class TokenStore implements AccessTokenSource {
   private access: string;
   private refreshToken: string;
 
@@ -56,5 +65,29 @@ export class TokenStore {
       .replace(/^TWITCH_ACCESS_TOKEN=.*/m, `TWITCH_ACCESS_TOKEN=${this.access}`)
       .replace(/^TWITCH_REFRESH_TOKEN=.*/m, `TWITCH_REFRESH_TOKEN=${this.refreshToken}`);
     await writeFile(this.envPath, content);
+  }
+}
+
+/**
+ * client credentials で取得するアプリアクセストークンを保持する（NOTIFY_CHANNELS 指定時の認証なしモード用）。
+ * Client ID / Secret があればいつでも取り直せるので、`.env` には永続化しない。
+ */
+export class AppTokenStore implements AccessTokenSource {
+  private access = "";
+
+  constructor(
+    private readonly clientId: string,
+    private readonly clientSecret: string,
+    private readonly fetchFn: (clientId: string, clientSecret: string) => Promise<string> = getAppAccessToken
+  ) {}
+
+  get accessToken(): string {
+    return this.access;
+  }
+
+  /** アプリアクセストークンを（取り直して）保持する。 */
+  async refresh(): Promise<void> {
+    this.access = await this.fetchFn(this.clientId, this.clientSecret);
+    console.log("[auth] App access token obtained");
   }
 }

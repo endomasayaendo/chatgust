@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { pathToFileURL } from "url";
 import { parse } from "dotenv";
+import { parseAllowlist } from "../src/notifyFilter.js";
 
 /**
  * `make setup` から呼ぶ .env の検査。必須項目が「未記入／.env.example の見本値のまま／OK」かを判定し、
@@ -52,6 +53,11 @@ export function hasTokens(env: Record<string, string>): boolean {
   return TOKENS.every((key) => Boolean(env[key]));
 }
 
+/** 監視チャンネルを直接指定しているか（指定していれば `make auth` なしで起動できる）。 */
+export function hasNotifyChannels(env: Record<string, string>): boolean {
+  return parseAllowlist(env.NOTIFY_CHANNELS).size > 0;
+}
+
 function main(): void {
   if (!existsSync(".env")) {
     console.error("❌ .env がありません。`make setup` で作成してください。");
@@ -75,10 +81,14 @@ function main(): void {
   console.log("\n次にやること:");
   if (!ready) {
     console.log("  .env の ❌ の項目を書いてから、もう一度 `make setup`");
-  } else if (!hasTokens(env)) {
-    console.log("  `make auth` で Twitch にログイン（トークンが .env に自動で書き込まれます）");
-  } else {
+  } else if (hasTokens(env)) {
     console.log("  準備完了。`make up` で起動");
+  } else if (hasNotifyChannels(env)) {
+    console.log("  準備完了。`make up` で起動（NOTIFY_CHANNELS のチャンネルだけを監視します）");
+    console.log("  フォロー中の全配信を監視したいときは `make auth` で Twitch にログイン");
+  } else {
+    console.log("  `make auth` で Twitch にログイン（トークンが .env に自動で書き込まれます）");
+    console.log("  またはログインせずに、.env の NOTIFY_CHANNELS に監視するチャンネルを書く");
   }
   console.log("");
 }
