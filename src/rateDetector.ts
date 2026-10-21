@@ -17,7 +17,7 @@ export interface SpikeDetector {
 export class RateDetector implements SpikeDetector {
   /**
    * 昇順に並んだ受信時刻。先頭 head 件は枝刈り済み（配列の詰め直しを毎回しないため）。
-   * 件数は二分探索で数えるので、高流量でも addMessage は償却 O(1)、集計は O(log n)。
+   * 枝刈りは head を進めるだけなので addMessage は償却 O(1)、件数は二分探索で数えるので集計は O(log n)。
    */
   private timestamps: number[] = [];
   private head = 0;
@@ -35,9 +35,12 @@ export class RateDetector implements SpikeDetector {
     this.prune(now - MAX_HISTORY_MS);
   }
 
-  /** cutoff 以下の時刻を捨てる。消費済みが半分を超えたら配列を詰め直す。 */
+  /**
+   * cutoff 以下の時刻を捨てる。消費済みが半分を超えたら配列を詰め直す。
+   * head は戻さないので、時計が巻き戻っても一度捨てた時刻は復活しない（旧実装の filter と同じ）。
+   */
   private prune(cutoff: number): void {
-    this.head = this.upperBound(cutoff);
+    while (this.head < this.timestamps.length && this.timestamps[this.head] <= cutoff) this.head++;
     if (this.head > this.timestamps.length / 2) {
       this.timestamps = this.timestamps.slice(this.head);
       this.head = 0;

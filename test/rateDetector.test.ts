@@ -222,7 +222,7 @@ describe("旧実装との同一性", () => {
   }
 
   it.each([1, 2, 3, 4, 5])(
-    "ランダムな受信列（境界ちょうど・時計の巻き戻しを含む）で全指標が一致する (seed=%i)",
+    "ランダムな受信列（境界ちょうど・保持期間を超える巻き戻しを含む）で全指標が一致する (seed=%i)",
     (seed) => {
       const rand = rng(seed);
       const d = new RateDetector();
@@ -231,7 +231,8 @@ describe("旧実装との同一性", () => {
 
       for (let step = 0; step < 3000; step++) {
         const r = rand();
-        if (r < 0.02) now -= Math.floor(rand() * 5_000); // 時計の巻き戻し
+        if (r < 0.005) now -= MAX_HISTORY + Math.floor(rand() * 60_000); // 保持期間を超える巻き戻し
+        else if (r < 0.02) now -= Math.floor(rand() * 5_000); // 時計の巻き戻し
         else if (r < 0.1) now += WINDOW; // ウィンドウ境界ちょうど
         else if (r < 0.12) now += MAX_HISTORY; // 履歴が全部消える
         else now += Math.floor(rand() * 400);
@@ -252,7 +253,7 @@ describe("旧実装との同一性", () => {
 });
 
 describe("高流量", () => {
-  it("1万件/5分を超える流量でも件数が正しく、受信処理が流量に比例して増えない", () => {
+  it("保持件数が満杯（66,000件）でも件数が正しく、30秒ぶん（6,000件）の受信が500ms未満で終わる", () => {
     vi.useRealTimers(); // performance.now() で実時間を計る
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(0);
@@ -275,14 +276,14 @@ describe("高流量", () => {
     expect(d.getRate()).toBe(perSec * 30);
     expect(d.getBaseline()).toBeCloseTo(perSec * 30, 0); // 最古ウィンドウは開始が -5ms なので 1件少ない
 
-    // 保持件数が満杯の状態で5秒ぶん（1,000件）受信する時間を計る。
-    // 旧実装はローカル Mac で約490ms（Issue #15 の計測）。全件走査が残っていれば
-    // ここで数百ms かかるので、余裕を持たせた上限で回帰を検出する。
+    // 保持件数が満杯の状態で30秒ぶん（6,000件）受信する時間を計る。
+    // 新実装はローカル Mac で 1ms 未満、全件走査の旧実装は 1秒以上かかる。
+    // CI の遅いランナーや GC でも落ちないよう、上限は新実装に対して大きく余裕を持たせる。
     const t0 = performance.now();
-    feedSeconds(5);
+    feedSeconds(30);
     const elapsed = performance.now() - t0;
 
     expect(d.getRate()).toBe(perSec * 30);
-    expect(elapsed).toBeLessThan(100);
+    expect(elapsed).toBeLessThan(500);
   });
 });
