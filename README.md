@@ -247,6 +247,7 @@ baseline < 1 の場合（配信開始直後など）:
 | -------------------- | :--------: | -------------------------------------------------------------------------------------------------------------------- |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | **必須** | Twitch アプリの ID / シークレット（取得場所は `.env.example` のコメント、または `make setup` の表示を参照） |
 | `DISCORD_WEBHOOK_URL` | （未設定） | 通知先の Discord Webhook URL。未設定なら通知はコンソールに出力する |
+| `REQUIRE_DISCORD_WEBHOOK` | （未設定） | 設定すると `DISCORD_WEBHOOK_URL` 未設定で起動エラーにする。本番（`fly.toml`）で設定済み |
 | `TWITCH_ACCESS_TOKEN` / `TWITCH_REFRESH_TOKEN` | （自動） | `make auth` / `npm run auth` が書き込む。手で書かない |
 | `HOST_PORT` | `3000` | `make up` でダッシュボードを開くホスト側のポート |
 | `PORT` | `3000` | `npm start` で直接動かすときのポート（Docker では使わない） |

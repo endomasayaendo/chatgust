@@ -40,6 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     TWITCH_CLIENT_ID,
     TWITCH_CLIENT_SECRET,
     DISCORD_WEBHOOK_URL,
+    REQUIRE_DISCORD_WEBHOOK,
     DASHBOARD_PASSWORD,
     NOTIFY_CHANNELS,
     TWITCH_ACCESS_TOKEN,
@@ -60,6 +61,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(
       "Missing required env vars. Copy .env.example to .env and fill in the values."
     );
+  }
+
+  // 本番（fly.toml で指定）では、Webhook の設定漏れでコンソール出力に落ちて通知が黙って届かなくなるのを防ぐ。
+  if (REQUIRE_DISCORD_WEBHOOK && !DISCORD_WEBHOOK_URL) {
+    throw new Error("DISCORD_WEBHOOK_URL is required (REQUIRE_DISCORD_WEBHOOK is set).");
   }
 
   return {

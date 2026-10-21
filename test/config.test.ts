@@ -19,6 +19,15 @@ describe("loadConfig", () => {
     expect(loadConfig(base).discordWebhookUrl).toBe("https://discord.com/api/webhooks/x");
   });
 
+  it("REQUIRE_DISCORD_WEBHOOK があれば（本番）DISCORD_WEBHOOK_URL 未設定で throw", () => {
+    expect(() =>
+      loadConfig({ ...base, REQUIRE_DISCORD_WEBHOOK: "1", DISCORD_WEBHOOK_URL: "" })
+    ).toThrow(/DISCORD_WEBHOOK_URL is required/);
+    expect(loadConfig({ ...base, REQUIRE_DISCORD_WEBHOOK: "1" }).discordWebhookUrl).toBe(
+      "https://discord.com/api/webhooks/x"
+    );
+  });
+
   it("不正な数値（0・非数）は throw する", () => {
     expect(() => loadConfig({ ...base, SPIKE_Z: "0" })).toThrow(/SPIKE_Z/);
     expect(() => loadConfig({ ...base, MIN_RATE: "abc" })).toThrow(/MIN_RATE/);
