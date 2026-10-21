@@ -135,7 +135,23 @@ describe("StreamSync", () => {
 
       expect(getVod).toHaveBeenCalledTimes(1);
       expect(getVod).toHaveBeenCalledWith("cid", "tok", "id-foo", "s-foo");
-      expect(joined.map((j) => j.stream?.vodId)).toEqual(["v1", "v1"]);
+      // 1回目: VOD を待たずに join → 見つかった VOD を付けて join し直す。2回目: キャッシュ済み
+      expect(joined.map((j) => j.stream?.vodId)).toEqual([null, "v1", "v1"]);
+    });
+
+    it("VOD の応答を待たずに join する（監視開始を遅らせない）", async () => {
+      let answer: (vodId: string | null) => void = () => {};
+      const getVod = vi.fn(() => new Promise<string | null>((resolve) => (answer = resolve)));
+      const { monitor, joined } = fakeMonitor();
+      const sync = new StreamSync("cid", fakeTokenStore().store, monitor, new Set(), apiWithVod(getVod));
+
+      const pending = sync.sync();
+      await vi.waitFor(() => expect(getVod).toHaveBeenCalled());
+      expect(joined.map((j) => j.channel)).toEqual(["foo"]); // VOD 未応答の時点で join 済み
+
+      answer("v1");
+      await pending;
+      expect(joined.map((j) => j.stream?.vodId)).toEqual([null, "v1"]);
     });
 
     it("見つからなければ vodId=null で join し、次の同期で引き直す", async () => {
@@ -146,7 +162,7 @@ describe("StreamSync", () => {
       await sync.sync();
       await sync.sync();
 
-      expect(joined.map((j) => j.stream?.vodId)).toEqual([null, "v1"]);
+      expect(joined.map((j) => j.stream?.vodId)).toEqual([null, null, "v1"]);
     });
 
     it("VOD の取得に失敗しても join は行う（VOD なし）", async () => {

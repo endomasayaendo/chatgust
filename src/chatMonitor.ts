@@ -120,18 +120,23 @@ export class ChatMonitor {
     if (this.destroyed) return;
     const existing = this.channels.get(channel);
     if (existing) {
+      // 同期間隔より短い間に配信し直すと、part を挟まずに別の配信（streamId 違い）が来る。
+      // 古い配信の VOD・開始時刻でリンクを作らないよう、記録上は別セッションに切り替える。
+      // チャットは同じなので、IRC 接続と検知器（ベースライン）はそのまま引き継ぐ。
+      if (existing.stream && stream && stream.streamId !== existing.stream.streamId) {
+        existing.title = title;
+        existing.stream = stream;
+        this.notifyObserver("onPart", () => this.observer.onPart(channel));
+        this.notifyObserver("onJoin", () => this.observer.onJoin(channel, title, stream));
+        console.log(`[IRC] #${channel} started a new stream`);
+        return;
+      }
       if (existing.title !== title) {
         existing.title = title;
         this.notifyObserver("onTitleChange", () => this.observer.onTitleChange(channel, title));
       }
-      // 別の配信（同じチャンネルで配信し直した等）の VOD を、今のセッションに付けないよう streamId で照合する。
       const vodId = stream?.vodId;
-      if (
-        existing.stream &&
-        vodId &&
-        stream.streamId === existing.stream.streamId &&
-        existing.stream.vodId !== vodId
-      ) {
+      if (existing.stream && vodId && existing.stream.vodId !== vodId) {
         existing.stream = { ...existing.stream, vodId };
         this.notifyObserver("onVodFound", () => this.observer.onVodFound(channel, vodId));
       }

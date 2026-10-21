@@ -70,18 +70,14 @@ export class StreamSync {
       const liveSet = new Set(live.map((s) => s.login));
       const currentSet = new Set(this.monitor.getStatus().map((s) => s.channel));
 
-      await this.resolveVods(token, live);
-
-      for (const stream of live) {
-        this.monitor.join(stream.login, stream.title, {
-          streamId: stream.streamId,
-          startedAt: stream.startedAt,
-          vodId: this.vodIds.get(stream.streamId) ?? null,
-        });
-      }
+      for (const stream of live) this.joinStream(stream);
       for (const channel of currentSet) {
         if (!liveSet.has(channel)) this.monitor.part(channel);
       }
+
+      // VOD は join の後に引く（応答待ちで監視開始を遅らせない）。見つかった分は join し直して反映する。
+      const found = await this.resolveVods(token, live);
+      for (const stream of found) this.joinStream(stream);
 
       console.log(`[sync] Monitoring ${liveSet.size} live streams`);
     } catch (err) {
@@ -99,27 +95,41 @@ export class StreamSync {
     }
   }
 
+  /** 配信を、分かっている VOD とともに monitor に join する。 */
+  private joinStream(stream: Stream): void {
+    this.monitor.join(stream.login, stream.title, {
+      streamId: stream.streamId,
+      startedAt: stream.startedAt,
+      vodId: this.vodIds.get(stream.streamId) ?? null,
+    });
+  }
+
   /**
-   * まだ VOD が分かっていない配信について、アーカイブ VOD を並列に引いてキャッシュする。
-   * VOD は付加情報なので、取得の失敗はログするだけで同期（join/part）は止めない。
+   * まだ VOD が分かっていない配信について、アーカイブ VOD を並列に引いてキャッシュし、
+   * 新たに VOD が見つかった配信を返す。VOD は付加情報なので、取得の失敗はログするだけにする。
    */
-  private async resolveVods(token: string, live: Stream[]): Promise<void> {
+  private async resolveVods(token: string, live: Stream[]): Promise<Stream[]> {
     const liveIds = new Set(live.map((s) => s.streamId));
     for (const id of this.vodIds.keys()) {
       if (!liveIds.has(id)) this.vodIds.delete(id);
     }
 
+    const found: Stream[] = [];
     await Promise.all(
       live
         .filter((s) => !this.vodIds.has(s.streamId))
         .map(async (s) => {
           try {
             const vodId = await this.api.getArchiveVideoId(this.clientId, token, s.userId, s.streamId);
-            if (vodId) this.vodIds.set(s.streamId, vodId);
+            if (vodId) {
+              this.vodIds.set(s.streamId, vodId);
+              found.push(s);
+            }
           } catch (err) {
             console.error(`[sync] VOD lookup for #${s.login} failed:`, (err as Error).message);
           }
         })
     );
+    return found;
   }
 }

@@ -183,9 +183,9 @@ describe("VOD リンク", () => {
       baseline: 5,
       streamUrl: "https://twitch.tv/shroud",
     };
-    await sendDiscordAlert(WEBHOOK, { ...alert, vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m00s" });
+    await sendDiscordAlert(WEBHOOK, { ...alert, vodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s" });
     expect(lastPayload().embeds[0].description).toContain(
-      "[この場面を VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m00s)"
+      "[この場面を VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m0s)"
     );
 
     fetchMock.mockClear();
@@ -201,12 +201,12 @@ describe("VOD リンク", () => {
       durationMin: 83,
       peakRate: 40,
       endReason: "streamEnded",
-      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h10m00s",
+      peakVodUrl: "https://www.twitch.tv/videos/v1?t=0h10m0s",
     });
     const peakField = lastPayload().embeds[0].fields.find(
       (f: { name: string }) => f.name === "ピーク流速"
     );
-    expect(peakField.value).toBe("40 件/30秒（[VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m00s)）");
+    expect(peakField.value).toBe("40 件/30秒（[VOD で見る](https://www.twitch.tv/videos/v1?t=0h10m0s)）");
   });
 
   it("buildReportPayload はピーク時刻と配信開始から VOD リンクを組み立てる", () => {
@@ -222,7 +222,7 @@ describe("VOD リンク", () => {
       stream: { streamId: "s1", startedAt: 0, vodId: "v1" },
     };
     expect(buildReportPayload(session, "https://x").peakVodUrl).toBe(
-      "https://www.twitch.tv/videos/v1?t=0h20m00s"
+      "https://www.twitch.tv/videos/v1?t=0h20m0s"
     );
     expect(buildReportPayload({ ...session, stream: null }, "https://x").peakVodUrl).toBeUndefined();
     expect(buildReportPayload({ ...session, peakAt: null }, "https://x").peakVodUrl).toBeUndefined();

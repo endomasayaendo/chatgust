@@ -11,14 +11,16 @@ export interface StreamRef {
   vodId: string | null;
 }
 
-/** VOD の指定位置へ飛ぶ URL（例: https://www.twitch.tv/videos/123?t=1h02m03s）を返す。 */
+/**
+ * VOD の指定位置へ飛ぶ URL（例: https://www.twitch.tv/videos/123?t=1h2m3s）を返す。
+ * 書式は Twitch 埋め込みプレイヤーの time パラメータ（既定 0h0m0s）に合わせ、ゼロ埋めしない。
+ */
 export function vodTimestampUrl(vodId: string, offsetMs: number): string {
   const totalSec = Math.max(0, Math.floor(offsetMs / 1000));
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor(totalSec / 60) % 60;
   const s = totalSec % 60;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `https://www.twitch.tv/videos/${vodId}?t=${h}h${pad(m)}m${pad(s)}s`;
+  return `https://www.twitch.tv/videos/${vodId}?t=${h}h${m}m${s}s`;
 }
 
 /**

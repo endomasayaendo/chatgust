@@ -130,6 +130,7 @@ sequenceDiagram
 ### シーケンス図の常時ループ外（起動時・改名・閲覧リクエスト時）
 - 起動時に、前回異常終了で残った未終了セッションを確定 … `index.ts`（起動時）→ `SqliteTimelineRepository.closeDangling()`
 - 配信中の改名（同期で同じチャンネルを再 join したとき）… `ChatMonitor.join()`（既存分岐・title 変化時のみ `onTitleChange`）→ `TimelineRecorder.onTitleChange()` → `repo.updateTitle()`
+- 同期間隔より短い間に配信し直した（part を挟まずに同じチャンネルで streamId が変わった）… `ChatMonitor.join()`（既存分岐）が `onPart` → `onJoin` で記録を別セッションに切り替える。古い配信の VOD・開始時刻でリンクを作らないため。チャットは同じなので IRC 接続と検知器はそのまま引き継ぐ
 - 配信中に VOD が見つかった（join 時は未作成で、後の同期で見つかった）… `ChatMonitor.join()`（既存分岐・同じ streamId で vodId が変化したときのみ `onVodFound`）→ `TimelineRecorder.onVodFound()` → `repo.updateVodId()`
 - `/reports/:id` … DB から波形HTMLを描画して配信（Discordリンク／ブラウザの着地点） … `server.ts` の `GET /reports/:id` → `repo.getSession()` → `renderHtml()`
 - `/api/reports`（一覧）/ `/api/reports/:id`（JSON） … `server.ts` の `GET /api/reports` / `GET /api/reports/:id`
@@ -143,10 +144,10 @@ sequenceDiagram
 - **タイマーは常に 1 本** — `chatMonitor` の `if (this.timer) return` が検知ループの二重起動を防ぐ。`IrcClient` の再接続タイマーも同様に 1 本だけで、`destroy()` が必ず `clearTimeout` する（残すと破棄後に接続が復活する）。
 - **配信規模に依存しない検知** — 「平均 + ばらつき(σ)」の z スコアで判定し、小規模〜大手まで同じ基準で効く（`RateDetector.isSpike()`）。
 - **終了時に配信中のセッションを確定して送る** — SIGINT（Fly.io の既定）と SIGTERM（`docker stop` 等）を同じ `shutdown()` に通す。`monitor.destroy()` は監視を止めるだけで `onPart` を呼ばないため、`TimelineRecorder.finishAll()` で稼働中セッションを明示的に確定し、レポートを送る。配信が終わったわけではないので、通知は「再起動のため途中まで」と配信終了とは区別する。Fly の `kill_timeout`（既定 5 秒）より先に終わるよう、送信の待ちは 4 秒で打ち切る。再起動をまたいだ同一配信のセッション再開は #20。
-- **VOD タイムスタンプリンク** — アラートとレポートに、Twitch VOD の該当位置へ飛ぶリンク（`?t=1h02m03s`）を付ける（`vod.ts`）。
+- **VOD タイムスタンプリンク** — アラートとレポートに、Twitch VOD の該当位置へ飛ぶリンク（`?t=1h2m3s`）を付ける（`vod.ts`）。
   - オフセットの起点は Twitch 上の**配信開始時刻**（`streams.started_at`）。`sessions.started_at` は ChatGust が join した時刻なので使わない。配信情報は `sessions.stream_id` / `stream_started_at` / `vod_id` に保存する（列は `openDb()` の `migrate()` が既存 DB にも追加する。追加前の行は NULL＝リンクなし）。
   - 流速は直近 30 秒窓の件数なので、発火時刻・ピークのサンプル時刻から**窓幅ぶん手前**を指す（`vodLinkForWindow()`）。
-  - VOD は `GET /videos?type=archive` の `stream_id` 照合で特定する。アラート時に引くと通知が遅れるため、同期ループで先回りして解決し `join` に添える。見つかるまで同期ごとに引き直す（VOD を保存しないチャンネルでは配信中ずっと、1 配信あたり 1 分に 1 回）。取得失敗はログのみで、join・通知は止めない。
+  - VOD は `GET /videos?type=archive` の `stream_id` 照合で特定する。アラート時に引くと通知が遅れるため、同期ループで先回りして解決する（join/part を先に済ませてから引き、見つかった分は join し直して `onVodFound` で反映。応答待ちで監視開始を遅らせない）。見つかるまで同期ごとに引き直す（VOD を保存しないチャンネルでは配信中ずっと、1 配信あたり 1 分に 1 回）。取得失敗はログのみで、join・通知は止めない。
 - **逐次永続化でクラッシュ耐性** — 流速は 5 秒ごとに即 SQLite へ INSERT（WAL）。プロセスが落ちても直近数秒しか失われず、起動時 `closeDangling` が未終了セッションを確定する。
 - **URL の秘匿** — レポート id はランダムな 12 桁 hex（連番の列挙による覗き見を防ぐ）。
 - **IRC 接続は「願望」を宣言的に再適用する** — `IrcClient` は監視すべきチャンネル集合（`channels`）を**あるべき姿**として保持し、`ws` はいつでも死にうる**現実**として扱う。切断中に増減したチャンネルの差分は追わず、**接続が張られるたびに open ハンドラが `channels` を丸ごと JOIN し直す**。この再適用があるため、再接続処理が数行で済む。
